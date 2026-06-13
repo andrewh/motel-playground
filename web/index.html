@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>motel playground</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">Skip to workbench</a>
+    <main class="shell">
+      <header class="topbar">
+        <div class="title-block">
+          <h1>motel playground</h1>
+          <div class="status" id="runtime-status">Runtime starting</div>
+        </div>
+        <div class="topbar-actions">
+          <nav class="topnav" aria-label="Project links">
+            <a href="https://github.com/andrewh/motel" target="_blank" rel="noopener noreferrer">motel code</a>
+            <a href="https://github.com/andrewh/motel-playground" target="_blank" rel="noopener noreferrer">playground code</a>
+            <a href="https://andrewh.github.io/motel" target="_blank" rel="noopener noreferrer">motel docs</a>
+            <a href="https://andrewh.github.io/motel-playground" target="_blank" rel="noopener noreferrer">playground docs</a>
+          </nav>
+          <button id="theme-toggle" class="icon-button" type="button" aria-pressed="false" aria-label="Switch to dark theme">
+            <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 2v2.2M12 19.8V22M4.93 4.93l1.56 1.56M17.51 17.51l1.56 1.56M2 12h2.2M19.8 12H22M4.93 19.07l1.56-1.56M17.51 6.49l1.56-1.56"></path>
+            </svg>
+            <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20.3 14.9A8.5 8.5 0 0 1 9.1 3.7a7 7 0 1 0 11.2 11.2z"></path>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="workspace" id="workspace" aria-label="Playground">
+        <div class="editor-pane">
+          <div class="pane-head">
+            <div>
+              <h2>Topology YAML</h2>
+              <p id="summary-line">Five-service demo topology</p>
+            </div>
+            <div class="actions">
+              <input id="topology-file" class="file-input" type="file" accept=".yaml,.yml,text/yaml,text/x-yaml,application/x-yaml" />
+              <button id="load-button" type="button">Load</button>
+              <button id="save-button" type="button">Save</button>
+              <button id="generate-button" type="button">Random topology</button>
+              <button id="validate-button" type="button">Validate</button>
+              <button id="run-button" type="button" class="primary">Run topology</button>
+            </div>
+          </div>
+          <textarea id="editor" spellcheck="false" aria-label="Topology YAML"></textarea>
+        </div>
+
+        <div class="results-pane">
+          <div class="controls">
+            <label>
+              Duration
+              <input id="duration" type="number" min="1" max="10" value="2" />
+            </label>
+            <label>
+              Seed
+              <input id="seed" type="number" min="1" value="42" />
+            </label>
+          </div>
+
+          <div class="metrics" aria-label="Run metrics">
+            <div><span>traces</span><strong id="metric-traces">0</strong></div>
+            <div><span>spans</span><strong id="metric-spans">0</strong></div>
+            <div><span>span errors</span><strong id="metric-errors">0%</strong></div>
+          </div>
+
+          <div class="tabs" role="tablist" aria-label="Result views">
+            <button class="tab active" data-view="preview" type="button">Traffic</button>
+            <button class="tab" data-view="traces" type="button">Spans</button>
+            <button class="tab" data-view="map" type="button">Map</button>
+            <button class="tab" data-view="raw" type="button">Raw</button>
+          </div>
+
+          <section class="view active" id="view-preview" aria-label="Traffic preview">
+            <div id="preview"></div>
+          </section>
+          <section class="view" id="view-traces" aria-label="Span waterfall">
+            <div id="traces" class="span-list"></div>
+          </section>
+          <section class="view" id="view-map" aria-label="Service map">
+            <div id="service-map" class="service-map"></div>
+          </section>
+          <section class="view" id="view-raw" aria-label="Raw output">
+            <pre id="raw-output"></pre>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="./vendor/p5/p5.min.js"></script>
+    <script src="./wasm_exec.js"></script>
+    <script src="./graph.js"></script>
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
