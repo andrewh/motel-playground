@@ -80,8 +80,8 @@
       hovered = nodeAt(p.mouseX, p.mouseY);
       container.style.cursor = hovered ? "pointer" : "default";
       for (const edge of edges) drawEdge(edge);
-      if (spans.length) for (const edge of edges) drawPulses(edge);
       for (const node of nodes) drawNode(node);
+      if (edges.length) drawLineKey();
       if (hovered) drawTooltip(hovered);
     };
 
@@ -207,20 +207,40 @@
       p.pop();
     }
 
-    function drawPulses(edge) {
-      if (!edge.path || edge.from === edge.to) return;
-      const targetStats = stats.get(edge.target) || { spans: 0, errors: 0, rate: 0 };
-      if (targetStats.rate <= 0) return;
-      const count = p.constrain(Math.round(Math.sqrt(targetStats.rate)), 1, 6);
-      const errorLevel = p.constrain(targetStats.spans ? (targetStats.errors / targetStats.spans) * 3 : 0, 0, 1);
-      const fill = p.lerpColor(p.color(palette.accent), p.color(palette.danger), errorLevel);
+    function drawLineKey() {
+      const x = 12;
+      const y = 12;
+      const width = 144;
+      const height = 78;
+      p.push();
+      p.rectMode(p.CORNER);
+      p.stroke(palette.line);
+      p.strokeWeight(1);
+      p.fill(palette.surface);
+      p.rect(x, y, width, height, 6);
       p.noStroke();
-      p.fill(fill);
-      for (let i = 0; i < count; i++) {
-        const position = ((p.millis() / 1000) * 0.55 + i / count) % 1;
-        const point = pointOnPath(edge.path, position);
-        p.circle(point.x, point.y, 5 + edgeWidth(edge.weight) / 2);
-      }
+      p.fill(palette.muted);
+      p.textAlign(p.LEFT, p.CENTER);
+      p.textStyle(p.NORMAL);
+      p.textSize(10);
+      p.text("line key", x + 10, y + 14);
+      drawLineKeyItem(x + 12, y + 34, "sync call", 1.5, false);
+      drawLineKeyItem(x + 12, y + 52, "async call", 1.5, true);
+      drawLineKeyItem(x + 12, y + 70, "more calls", 4, false);
+      p.pop();
+    }
+
+    function drawLineKeyItem(x, y, label, width, dashed) {
+      p.stroke(palette.edge);
+      p.strokeWeight(width);
+      if (dashed) p.drawingContext.setLineDash([6, 5]);
+      p.line(x, y, x + 30, y);
+      p.drawingContext.setLineDash([]);
+      p.noStroke();
+      p.fill(palette.edge);
+      p.triangle(x + 34, y, x + 27, y - 4, x + 27, y + 4);
+      p.fill(palette.muted);
+      p.text(label, x + 44, y + 1);
     }
 
     function drawNode(node) {
@@ -424,24 +444,7 @@
       const last = pts[pts.length - 1];
       if (Math.abs(point[0] - last[0]) > 0.01 || Math.abs(point[1] - last[1]) > 0.01) pts.push(point);
     }
-    const lens = [0];
-    let total = 0;
-    for (let i = 1; i < pts.length; i++) {
-      total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
-      lens.push(total);
-    }
-    return { pts, lens, total };
-  }
-
-  function pointOnPath(path, t) {
-    const distance = t * path.total;
-    let i = 1;
-    while (i < path.lens.length - 1 && path.lens[i] < distance) i++;
-    const segmentLength = path.lens[i] - path.lens[i - 1] || 1;
-    const f = (distance - path.lens[i - 1]) / segmentLength;
-    const a = path.pts[i - 1];
-    const b = path.pts[i];
-    return { x: a[0] + (b[0] - a[0]) * f, y: a[1] + (b[1] - a[1]) * f };
+    return { pts };
   }
 
   function renderFallback(container, graph, spans) {
