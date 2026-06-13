@@ -154,9 +154,15 @@ try {
 
   const durationControl = await evaluate(client, `(() => {
     const input = document.querySelector("#duration");
-    return { value: input.value, min: input.min, step: input.step };
+    return { value: input.value, min: input.min, max: input.max, step: input.step, label: input.closest("label")?.textContent.trim() };
   })()`);
-  if (durationControl.value !== "1" || durationControl.min !== "0.1" || durationControl.step !== "0.1") {
+  if (
+    durationControl.value !== "1"
+    || durationControl.min !== "0.1"
+    || durationControl.max !== "10"
+    || durationControl.step !== "0.1"
+    || !durationControl.label.includes("max 10s")
+  ) {
     throw new Error(`duration control does not default to one-second fractional input: ${JSON.stringify(durationControl)}`);
   }
   await evaluate(client, `document.querySelector("#duration").value = "1"`);
