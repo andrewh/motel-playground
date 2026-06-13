@@ -150,6 +150,11 @@ els.errorFilter.addEventListener("click", () => {
   state.errorTracesOnly = !state.errorTracesOnly;
   renderSpans(state.lastRun?.spans ?? []);
 });
+els.duration.addEventListener("input", () => {
+  if (state.ready && state.currentTopology && !state.runtimeBusy) {
+    renderPreview();
+  }
+});
 els.editor.addEventListener("input", () => {
   markEditorChanged();
 });
@@ -308,8 +313,16 @@ function topologyFilename() {
 }
 
 async function renderPreview() {
-  const svg = await window.motelPreview(els.editor.value, 300);
+  const svg = await window.motelPreview(els.editor.value, previewDurationSeconds());
   els.preview.innerHTML = svg;
+}
+
+function previewDurationSeconds() {
+  const value = Number(els.duration.value);
+  const min = Number(els.duration.min) || 0.1;
+  const max = Number(els.duration.max) || 10;
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  return Math.min(max, Math.max(min, value));
 }
 
 function renderValidation(result) {

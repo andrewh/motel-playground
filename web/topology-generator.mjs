@@ -140,11 +140,15 @@ export function randomTopologyYaml(seed, options = {}) {
   }
 
   const rate = randInt(random, 8, 80);
-  const incident = random() > 0.45 ? pick(random, nodes.slice(1)) : null;
+  const traffic = randomTraffic(random, rate);
+  const incident = pick(random, scenarioIncidentCandidates(nodes));
+  const shapeTarget = downstreamShapeTarget(nodes, incident);
+  const incidentTraffic = randomScenarioTraffic(random, rate);
   const lines = [
     `# Random topology generated in motel playground`,
     `# Seed: ${seed}`,
     `# Pattern: ${template.name}`,
+    `# Traffic: ${traffic.description}`,
     `# Max nodes: ${maxNodes}`,
     `version: 1`,
     ``,
@@ -178,17 +182,31 @@ export function randomTopologyYaml(seed, options = {}) {
   }
 
   lines.push(`traffic:`);
-  lines.push(`  rate: ${rate}/s`);
+  for (const line of traffic.lines) {
+    lines.push(`  ${line}`);
+  }
   if (incident) {
     lines.push(``);
     lines.push(`scenarios:`);
     lines.push(`  - name: generated degradation`);
-    lines.push(`    at: +${randInt(random, 4, 12)}s`);
-    lines.push(`    duration: ${randInt(random, 12, 30)}s`);
+    lines.push(`    at: +${randMs(random, 180, 320)}`);
+    lines.push(`    duration: ${randMs(random, 500, 760)}`);
+    if (incidentTraffic) {
+      lines.push(`    traffic:`);
+      for (const line of incidentTraffic.lines) {
+        lines.push(`      ${line}`);
+      }
+    }
     lines.push(`    override:`);
     lines.push(`      ${incident.name}.${incident.operation}:`);
     lines.push(`        duration: ${incident.duration * randInt(random, 5, 12)}ms +/- ${incident.variance * 2}ms`);
     lines.push(`        error_rate: ${randInt(random, 6, 24)}%`);
+    if (shapeTarget) {
+      lines.push(`        add_calls:`);
+      lines.push(`          - target: ${shapeTarget.name}.${shapeTarget.operation}`);
+      lines.push(`            probability: ${formatPercent(0.45 + random() * 0.45)}`);
+      if (random() > 0.45) lines.push(`            async: true`);
+    }
   }
   return `${lines.join("\n")}\n`;
 }
@@ -235,6 +253,136 @@ function writeCall(lines, outbound) {
   if (outbound.async) lines.push(`            async: true`);
 }
 
+function scenarioIncidentCandidates(nodes) {
+  const withDownstream = nodes.slice(1, -1);
+  return withDownstream.length ? withDownstream : nodes.slice(1);
+}
+
+function downstreamShapeTarget(nodes, incident) {
+  const start = nodes.indexOf(incident) + 1;
+  if (start <= 0 || start >= nodes.length) return null;
+  const existing = new Set(incident.calls.map((outbound) => outbound.target));
+  const downstream = nodes.slice(start);
+  return downstream.find((node) => !existing.has(`${node.name}.${node.operation}`)) || downstream[0] || null;
+}
+
+function randomTraffic(random, baseRate) {
+  const variant = pick(random, ["bursty", "diurnal", "custom", "overlay"]);
+  if (variant === "bursty") {
+    const interval = randMs(random, 360, 720);
+    const duration = randMs(random, 90, 180);
+    const multiplier = formatDecimal(2 + random() * 3.5);
+    return {
+      description: `bursty ${duration} every ${interval}`,
+      lines: [
+        `rate: ${baseRate}/s`,
+        `pattern: bursty`,
+        `burst_multiplier: ${multiplier}`,
+        `burst_interval: ${interval}`,
+        `burst_duration: ${duration}`,
+      ],
+    };
+  }
+  if (variant === "diurnal") {
+    const period = randMs(random, 700, 1200);
+    const trough = formatDecimal(0.25 + random() * 0.45);
+    const peak = formatDecimal(1.5 + random() * 1.3);
+    return {
+      description: `short-period diurnal ${period}`,
+      lines: [
+        `rate: ${baseRate}/s`,
+        `pattern: diurnal`,
+        `peak_multiplier: ${peak}`,
+        `trough_multiplier: ${trough}`,
+        `period: ${period}`,
+      ],
+    };
+  }
+  if (variant === "custom") {
+    const first = randInt(random, 180, 260);
+    const second = first + randInt(random, 220, 300);
+    const third = second + randInt(random, 220, 320);
+    const low = Math.max(1, Math.round(baseRate * (0.35 + random() * 0.25)));
+    const high = Math.max(baseRate + 1, Math.round(baseRate * (1.55 + random() * 1.45)));
+    const recovery = Math.max(1, Math.round(baseRate * (0.8 + random() * 0.35)));
+    return {
+      description: `custom ${first}ms/${second}ms/${third}ms segments`,
+      lines: [
+        `rate: ${baseRate}/s`,
+        `pattern: custom`,
+        `segments:`,
+        `  - until: ${first}ms`,
+        `    rate: ${low}/s`,
+        `  - until: ${second}ms`,
+        `    rate: ${high}/s`,
+        `  - until: ${third}ms`,
+        `    rate: ${recovery}/s`,
+      ],
+    };
+  }
+
+  const period = randMs(random, 800, 1300);
+  const burstInterval = randMs(random, 360, 720);
+  const burstDuration = randMs(random, 90, 180);
+  return {
+    description: `diurnal base with burst overlay`,
+    lines: [
+      `rate: ${baseRate}/s`,
+      `pattern: diurnal`,
+      `peak_multiplier: ${formatDecimal(1.25 + random() * 0.65)}`,
+      `trough_multiplier: ${formatDecimal(0.55 + random() * 0.25)}`,
+      `period: ${period}`,
+      `overlay:`,
+      `  rate: ${baseRate}/s`,
+      `  pattern: bursty`,
+      `  burst_multiplier: ${formatDecimal(1.8 + random() * 2.4)}`,
+      `  burst_interval: ${burstInterval}`,
+      `  burst_duration: ${burstDuration}`,
+    ],
+  };
+}
+
+function randomScenarioTraffic(random, baseRate) {
+  const rate = Math.max(1, Math.round(baseRate * (1.35 + random() * 1.75)));
+  const variant = pick(random, ["bursty", "custom", "diurnal"]);
+  if (variant === "bursty") {
+    const interval = randMs(random, 300, 620);
+    return {
+      lines: [
+        `rate: ${rate}/s`,
+        `pattern: bursty`,
+        `burst_multiplier: ${formatDecimal(1.6 + random() * 1.8)}`,
+        `burst_interval: ${interval}`,
+        `burst_duration: ${randMs(random, 80, 160)}`,
+      ],
+    };
+  }
+  if (variant === "custom") {
+    const first = randInt(random, 180, 300);
+    const second = first + randInt(random, 220, 360);
+    return {
+      lines: [
+        `rate: ${baseRate}/s`,
+        `pattern: custom`,
+        `segments:`,
+        `  - until: ${first}ms`,
+        `    rate: ${rate}/s`,
+        `  - until: ${second}ms`,
+        `    rate: ${Math.max(1, Math.round(rate * 0.55))}/s`,
+      ],
+    };
+  }
+  return {
+    lines: [
+      `rate: ${rate}/s`,
+      `pattern: diurnal`,
+      `peak_multiplier: ${formatDecimal(1.7 + random() * 1.1)}`,
+      `trough_multiplier: ${formatDecimal(0.35 + random() * 0.3)}`,
+      `period: ${randMs(random, 650, 1100)}`,
+    ],
+  };
+}
+
 function normalizedMaxNodes(value) {
   const parsed = Math.floor(Number(value) || DEFAULT_MAX_NODES);
   return Math.min(HARD_MAX_NODES, Math.max(MIN_NODES, parsed));
@@ -255,10 +403,18 @@ function randInt(random, min, max) {
   return Math.floor(random() * (max - min + 1)) + min;
 }
 
+function randMs(random, min, max) {
+  return `${randInt(random, min, max)}ms`;
+}
+
 function pick(random, items) {
   return items[Math.floor(random() * items.length)];
 }
 
 function formatPercent(value) {
   return value < 1 ? Number(value.toFixed(3)) : Number(value.toFixed(1));
+}
+
+function formatDecimal(value) {
+  return Number(value.toFixed(2));
 }
