@@ -386,6 +386,18 @@ button.invalid {
   gap: var(--space-2);
   flex-wrap: wrap;
   justify-content: end;
+  align-items: end;
+}
+
+.field-compact {
+  grid-template-columns: auto 78px;
+  align-items: center;
+  min-height: 42px;
+}
+
+.field-compact input {
+  width: 78px;
+  height: 42px;
 }
 
 textarea {

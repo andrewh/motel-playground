@@ -109,10 +109,21 @@ try {
   }, "service map rendered");
 
   const sampleTopology = await evaluate(client, `document.querySelector("#editor").value`);
+  const maxNodeControl = await evaluate(client, `(() => {
+    const input = document.querySelector("#max-nodes");
+    return { value: input.value, min: input.min, max: input.max, step: input.step };
+  })()`);
+  if (maxNodeControl.value !== "8" || maxNodeControl.min !== "2" || maxNodeControl.max !== "12" || maxNodeControl.step !== "1") {
+    throw new Error(`max-node control has unexpected defaults: ${JSON.stringify(maxNodeControl)}`);
+  }
+  await evaluate(client, `document.querySelector("#max-nodes").value = "3"`);
   const firstRandom = await generateDifferentTopology(client, sampleTopology);
   const secondRandom = await generateDifferentTopology(client, firstRandom.value);
   if (firstRandom.seed === secondRandom.seed) {
     throw new Error(`random topology reused seed ${firstRandom.seed}`);
+  }
+  if (firstRandom.services > 3 || secondRandom.services > 3) {
+    throw new Error(`random topology exceeded max nodes: ${JSON.stringify({ firstRandom, secondRandom })}`);
   }
   await setEditorValue(client, sampleTopology);
 
@@ -289,6 +300,7 @@ async function generateDifferentTopology(client, previousValue) {
     const snapshot = await evaluate(client, `(() => ({
       value: document.querySelector("#editor").value,
       seed: document.querySelector("#seed").value,
+      services: document.querySelector("#editor").value.split("\\n").filter((line) => /^  [a-z0-9-]+:$/.test(line)).length,
     }))()`);
     return snapshot.value !== previousValue && snapshot.value.includes(`# Seed: ${snapshot.seed}`) ? snapshot : false;
   }, "random topology changed");

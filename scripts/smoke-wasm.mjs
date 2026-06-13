@@ -73,6 +73,15 @@ for (const seed of [1, 42, 777, 2026]) {
   if (!generatedRun.ok || generatedRun.stats.traces < 1 || generatedRun.spans.length < 1) {
     throw new Error(`generated topology ${seed} did not run: ${JSON.stringify(generatedRun)}`);
   }
+
+  const capped = randomTopologyYaml(seed, { maxNodes: 3 });
+  const cappedValidation = JSON.parse(await globalThis.motelValidate(capped));
+  if (!cappedValidation.ok) {
+    throw new Error(`capped generated topology ${seed} failed validation: ${JSON.stringify(cappedValidation.diagnostics)}`);
+  }
+  if (cappedValidation.topology.services.length > 3) {
+    throw new Error(`generated topology ${seed} exceeded max nodes: ${cappedValidation.topology.services.length}`);
+  }
 }
 
 console.log(`wasm smoke ok: ${run.stats.traces} traces, ${run.stats.spans} spans; generated topologies valid`);
