@@ -375,6 +375,12 @@ button.validated {
   color: var(--ready-ink);
 }
 
+button.invalid {
+  border-color: color-mix(in oklch, var(--danger), var(--line) 35%);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .actions {
   display: flex;
   gap: var(--space-2);
