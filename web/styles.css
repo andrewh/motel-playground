@@ -853,113 +853,17 @@ input {
   overflow-wrap: anywhere;
 }
 
-.raw-output {
+pre {
   min-height: 100%;
   margin: 0;
   border-radius: var(--radius-sm);
-  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   color: var(--code-ink);
   background: var(--code-bg);
   padding: var(--space-4);
   font: 0.78rem/1.55 var(--font-code);
   font-variant-ligatures: none;
-}
-
-.raw-output.raw-text {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.raw-output.raw-json {
-  white-space: normal;
-}
-
-.json-node {
-  margin: 0 0 2px;
-}
-
-.json-node summary {
-  display: flex;
-  gap: 0.5ch;
-  align-items: baseline;
-  min-height: 28px;
-  cursor: pointer;
-  list-style: none;
-}
-
-.json-node summary::-webkit-details-marker {
-  display: none;
-}
-
-.json-node summary::before {
-  content: ">";
-  flex: 0 0 auto;
-  width: 1ch;
-  color: color-mix(in oklch, var(--code-ink), transparent 45%);
-  transform: translateY(-1px);
-  transition: transform 120ms var(--ease-out);
-}
-
-.json-node[open] > summary::before {
-  transform: rotate(90deg) translateX(1px);
-}
-
-.json-node summary:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-  border-radius: 3px;
-}
-
-.json-children {
-  margin-left: 1.1ch;
-  padding-left: 2.2ch;
-  border-left: 1px solid color-mix(in oklch, var(--code-ink), transparent 82%);
-}
-
-.json-row {
-  display: flex;
-  gap: 0.5ch;
-  align-items: baseline;
-  min-height: 26px;
-  margin-left: 1.5ch;
-}
-
-.json-key {
-  color: var(--code-ink);
-  font-weight: 680;
-}
-
-.json-key::after {
-  content: ":";
-  color: color-mix(in oklch, var(--code-ink), transparent 45%);
-  font-weight: 450;
-}
-
-.json-type,
-.json-empty {
-  color: color-mix(in oklch, var(--code-ink), transparent 38%);
-  font-size: 0.72rem;
-}
-
-.json-node[open] > summary .json-summary-close {
-  display: none;
-}
-
-.json-close {
-  min-height: 24px;
-  margin-left: 1.1ch;
-  color: color-mix(in oklch, var(--code-ink), transparent 28%);
-}
-
-.json-punctuation,
-.json-comma,
-.json-summary-close {
-  color: color-mix(in oklch, var(--code-ink), transparent 28%);
-}
-
-.json-scalar {
-  overflow-wrap: anywhere;
-  color: color-mix(in oklch, var(--code-ink), transparent 14%);
 }
 
 @keyframes reveal {
