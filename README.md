@@ -47,9 +47,11 @@ Then open <http://localhost:8080>.
 Run verification:
 
 ```sh
-go test ./...
-node scripts/smoke-wasm.mjs
+make test
 ```
+
+The browser smoke test launches headless Chrome. Set `CHROME_BIN` if Chrome is
+not on your `PATH` or in the default macOS application location.
 
 ## Motel submodule
 

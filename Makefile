@@ -11,8 +11,10 @@ wasm:
 serve: wasm
 	python3 -m http.server 8080 --directory web
 
-test:
+test: wasm
 	go test ./...
+	node scripts/smoke-wasm.mjs
+	node scripts/smoke-browser.mjs
 
 clean:
 	rm -f web/motel.wasm web/wasm_exec.js

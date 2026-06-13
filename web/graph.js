@@ -7,19 +7,32 @@
   const CORNER_R = 10;
 
   let sketch = null;
+  let renderToken = 0;
+  let colorProbe = null;
 
   window.renderP5Map = function renderP5Map(container, graph, spans) {
+    const token = ++renderToken;
     if (!window.p5) {
       renderFallback(container, graph, spans);
       return;
     }
-    if (sketch) {
-      sketch.remove();
-      sketch = null;
-    }
+    removeSketch();
     container.innerHTML = "";
     container.classList.add("p5-map");
-    sketch = new p5((p) => createSketch(p, container, graph, spans), container);
+    try {
+      sketch = new p5((p) => createSketch(p, container, graph, spans), container);
+      verifyCanvasPainted(container, graph, spans, token);
+    } catch (error) {
+      console.warn("p5 map failed; falling back to HTML map", error);
+      renderFallback(container, graph, spans);
+    }
+  };
+
+  window.clearP5Map = function clearP5Map(container, message) {
+    renderToken++;
+    removeSketch();
+    container.classList.remove("p5-map");
+    container.innerHTML = `<p class="empty">${escapeHtml(message || "No service map available.")}</p>`;
   };
 
   function createSketch(p, container, graph, spans) {
@@ -332,6 +345,8 @@
   }
 
   function resolveColor(color) {
+    const canvasColor = canvasResolvedColor(color);
+    if (canvasColor) return canvasColor;
     const probe = document.createElement("span");
     probe.style.color = color;
     probe.style.position = "absolute";
@@ -339,7 +354,68 @@
     document.body.appendChild(probe);
     const resolved = getComputedStyle(probe).color;
     probe.remove();
-    return resolved || color;
+    return canvasResolvedColor(resolved) || resolved || color;
+  }
+
+  function canvasResolvedColor(color) {
+    if (!color) return "";
+    if (!colorProbe) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1;
+      canvas.height = 1;
+      colorProbe = canvas.getContext("2d", { willReadFrequently: true });
+    }
+    if (!colorProbe) return "";
+    colorProbe.clearRect(0, 0, 1, 1);
+    colorProbe.fillStyle = "rgba(0, 0, 0, 0)";
+    try {
+      colorProbe.fillStyle = color;
+    } catch {
+      return "";
+    }
+    colorProbe.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = colorProbe.getImageData(0, 0, 1, 1).data;
+    if (a === 0) return "";
+    const alpha = Math.round((a / 255) * 1000) / 1000;
+    return alpha >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  function verifyCanvasPainted(container, graph, spans, token) {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (token !== renderToken) return;
+        if (!canvasHasInk(container)) {
+          console.warn("p5 map rendered a blank canvas; falling back to HTML map");
+          renderFallback(container, graph, spans);
+        }
+      });
+    });
+  }
+
+  function canvasHasInk(container) {
+    const canvas = container.querySelector("canvas");
+    if (!canvas || !canvas.width || !canvas.height) return false;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return false;
+    const { data, width, height } = context.getImageData(0, 0, canvas.width, canvas.height);
+    if (!width || !height || data.length < 4) return false;
+    const step = Math.max(1, Math.floor((width * height) / 8000));
+    const base = [data[0], data[1], data[2], data[3]];
+    for (let pixel = step; pixel < width * height; pixel += step) {
+      const index = pixel * 4;
+      const delta = Math.abs(data[index] - base[0])
+        + Math.abs(data[index + 1] - base[1])
+        + Math.abs(data[index + 2] - base[2])
+        + Math.abs(data[index + 3] - base[3]);
+      if (delta > 8) return true;
+    }
+    return false;
+  }
+
+  function removeSketch() {
+    if (!sketch) return;
+    sketch.remove();
+    sketch = null;
   }
 
   function makePath(rawPts) {
@@ -369,6 +445,7 @@
   }
 
   function renderFallback(container, graph, spans) {
+    removeSketch();
     const counts = serviceStats(spans);
     container.classList.remove("p5-map");
     container.innerHTML = graph.nodes.map((node) => {

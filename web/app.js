@@ -74,6 +74,15 @@ const state = {
   currentTopology: null,
 };
 
+const emptyCopy = {
+  spans: "Run the topology to inspect spans.",
+  invalidSpans: "Fix validation errors before running the topology.",
+  runFailedSpans: "Run failed; no spans are available.",
+  map: "Open the map tab to render the service graph.",
+  invalidMap: "Fix validation errors to render the service map.",
+  invalidPreview: "Fix validation errors to preview traffic.",
+};
+
 const els = {
   editor: document.querySelector("#editor"),
   status: document.querySelector("#runtime-status"),
@@ -99,7 +108,7 @@ const els = {
 };
 
 els.editor.value = sampleTopology;
-els.map.innerHTML = `<p class="empty">Open the map tab to render the service graph.</p>`;
+clearMap(emptyCopy.map);
 
 initTheme();
 
@@ -128,6 +137,9 @@ els.generate.addEventListener("click", () => generateTopology());
 els.load.addEventListener("click", () => els.file.click());
 els.save.addEventListener("click", () => saveTopology());
 els.file.addEventListener("change", () => loadTopologyFile());
+els.editor.addEventListener("input", () => {
+  setValidateButton("Validate");
+});
 
 loadWasm();
 
@@ -162,23 +174,22 @@ async function loadWasm() {
 
 async function validate({ passive = false } = {}) {
   if (!state.ready) return;
+  let valid = false;
   setBusy(true, "Validating", { resetValidate: false });
   if (!passive) {
-    els.validate.textContent = "Validating";
-    els.validate.classList.remove("validated");
+    setValidateButton("Validating");
   }
   try {
     const result = JSON.parse(await window.motelValidate(els.editor.value));
-    renderValidation(result);
-    if (result.ok) {
+    valid = renderValidation(result);
+    if (valid) {
       await renderPreview();
     }
     els.raw.textContent = JSON.stringify(result, null, 2);
   } finally {
     setBusy(false, "Runtime ready");
     if (!passive) {
-      els.validate.textContent = "Validated";
-      els.validate.classList.add("validated");
+      setValidateButton(valid ? "Validated" : "Invalid", valid ? "validated" : "invalid");
     }
   }
 }
@@ -192,7 +203,6 @@ async function run() {
       Number(els.duration.value),
       Number(els.seed.value),
     ));
-    state.lastRun = result;
     renderRun(result);
     els.raw.textContent = JSON.stringify(result, null, 2);
   } finally {
@@ -206,12 +216,8 @@ async function generateTopology() {
   els.editor.value = topology;
   els.summary.classList.remove("bad");
   els.summary.textContent = "Generated topology";
-  els.metrics.traces.textContent = "0";
-  els.metrics.spans.textContent = "0";
-  els.metrics.errors.textContent = "0%";
-  els.traces.innerHTML = `<p class="empty">Run the topology to inspect spans.</p>`;
+  clearRunOutput(emptyCopy.spans);
   els.raw.textContent = "";
-  state.lastRun = null;
   if (state.ready) await validate({ passive: true });
 }
 
@@ -222,12 +228,8 @@ async function loadTopologyFile() {
     els.editor.value = await file.text();
     els.summary.classList.remove("bad", "good");
     els.summary.textContent = `Loaded ${file.name}`;
-    els.metrics.traces.textContent = "0";
-    els.metrics.spans.textContent = "0";
-    els.metrics.errors.textContent = "0%";
-    els.traces.innerHTML = `<p class="empty">Run the topology to inspect spans.</p>`;
+    clearRunOutput(emptyCopy.spans);
     els.raw.textContent = "";
-    state.lastRun = null;
     if (state.ready) await validate({ passive: true });
   } catch (error) {
     els.summary.textContent = `Could not load file: ${error.message}`;
@@ -266,10 +268,14 @@ function renderValidation(result) {
   if (!result.ok) {
     const diagnostics = result.diagnostics ?? [];
     const message = diagnostics[0]?.message ?? "Topology is invalid";
+    state.currentTopology = null;
+    clearPreview(emptyCopy.invalidPreview);
+    clearRunOutput(emptyCopy.invalidSpans);
+    clearMap(emptyCopy.invalidMap);
     els.summary.textContent = `Invalid topology: ${message}`;
     els.summary.classList.remove("good");
     els.summary.classList.add("bad");
-    return;
+    return false;
   }
   const topology = result.topology;
   state.currentTopology = topology;
@@ -277,15 +283,23 @@ function renderValidation(result) {
   els.summary.classList.remove("bad");
   els.summary.textContent = `Valid topology: ${topology.services.length} services, ${topology.operations} operations, ${topology.edges} calls`;
   renderMap(topology, []);
+  return true;
 }
 
 function renderRun(result) {
   if (!result.ok) {
+    state.lastRun = null;
+    state.currentTopology = null;
+    clearPreview("Fix the run error to preview traffic.");
+    clearRunOutput(emptyCopy.runFailedSpans);
+    clearMap("Fix the run error to render the service map.");
     els.summary.textContent = result.errors?.[0]?.message ?? "Run failed";
+    els.summary.classList.remove("good");
     els.summary.classList.add("bad");
     return;
   }
   const stats = result.stats;
+  state.lastRun = result;
   state.currentTopology = result.topology;
   els.metrics.traces.textContent = stats.traces;
   els.metrics.spans.textContent = stats.spans;
@@ -474,6 +488,33 @@ function renderMap(topology, spans) {
   }).join("");
 }
 
+function clearRunOutput(message) {
+  state.lastRun = null;
+  els.metrics.traces.textContent = "0";
+  els.metrics.spans.textContent = "0";
+  els.metrics.errors.textContent = "0%";
+  els.traces.innerHTML = `<p class="empty">${escapeHtml(message)}</p>`;
+}
+
+function clearPreview(message) {
+  els.preview.innerHTML = `<p class="empty">${escapeHtml(message)}</p>`;
+}
+
+function clearMap(message) {
+  if (window.clearP5Map) {
+    window.clearP5Map(els.map, message);
+    return;
+  }
+  els.map.classList.remove("p5-map");
+  els.map.innerHTML = `<p class="empty">${escapeHtml(message)}</p>`;
+}
+
+function setValidateButton(label, stateClass) {
+  els.validate.textContent = label;
+  els.validate.classList.remove("validated", "invalid");
+  if (stateClass) els.validate.classList.add(stateClass);
+}
+
 function setBusy(isBusy, label, { resetValidate = true } = {}) {
   els.status.textContent = label;
   els.load.disabled = isBusy;
@@ -482,8 +523,7 @@ function setBusy(isBusy, label, { resetValidate = true } = {}) {
   els.validate.disabled = isBusy;
   els.run.disabled = isBusy;
   if (isBusy && resetValidate) {
-    els.validate.textContent = "Validate";
-    els.validate.classList.remove("validated");
+    setValidateButton("Validate");
   }
 }
 
