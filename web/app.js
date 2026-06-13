@@ -400,21 +400,28 @@ function clearRawOutput() {
   els.raw.textContent = "";
 }
 
-function renderJsonNode(value, label, depth) {
+function renderJsonNode(value, label, depth, hasComma = false) {
+  const comma = hasComma ? `<span class="json-comma">,</span>` : "";
   if (!isJsonBranch(value)) {
-    return `<div class="json-row">${jsonLabel(label)}${jsonScalar(value)}</div>`;
+    return `<div class="json-row">${jsonLabel(label)}${jsonScalar(value)}${comma}</div>`;
   }
 
   const isArray = Array.isArray(value);
   const entries = isArray ? value.map((item, index) => [`[${index}]`, item]) : Object.entries(value);
+  const opener = isArray ? "[" : "{";
+  const closer = isArray ? "]" : "}";
+  if (!entries.length) {
+    return `<div class="json-row">${jsonLabel(label)}<span class="json-punctuation">${opener}${closer}</span>${comma}</div>`;
+  }
   const type = isArray ? "array" : "object";
   const unit = isArray ? (entries.length === 1 ? "item" : "items") : (entries.length === 1 ? "field" : "fields");
   const open = depth === 0 ? " open" : "";
   return `<details class="json-node"${open}>
-    <summary>${jsonLabel(label)}<span class="json-type">${type} · ${entries.length} ${unit}</span></summary>
+    <summary>${jsonLabel(label)}<span class="json-punctuation">${opener}</span><span class="json-type">${type} · ${entries.length} ${unit}</span><span class="json-summary-close">${closer}${hasComma ? "," : ""}</span></summary>
     <div class="json-children">
-      ${entries.length ? entries.map(([key, item]) => renderJsonNode(item, key, depth + 1)).join("") : `<span class="json-empty">empty</span>`}
+      ${entries.map(([key, item], index) => renderJsonNode(item, key, depth + 1, index < entries.length - 1)).join("")}
     </div>
+    <div class="json-close"><span class="json-punctuation">${closer}</span>${comma}</div>
   </details>`;
 }
 
