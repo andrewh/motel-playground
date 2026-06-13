@@ -85,6 +85,10 @@
             <div id="preview"></div>
           </section>
           <section class="view" id="view-traces" aria-label="Span waterfall">
+            <div class="span-toolbar">
+              <button id="error-filter" class="filter-toggle" type="button" aria-pressed="false" disabled>Errors only</button>
+              <span id="span-filter-count">0 traces</span>
+            </div>
             <div id="traces" class="span-list"></div>
           </section>
           <section class="view" id="view-map" aria-label="Service map">

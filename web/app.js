@@ -72,6 +72,7 @@ const state = {
   ready: false,
   lastRun: null,
   currentTopology: null,
+  errorTracesOnly: false,
 };
 
 const emptyCopy = {
@@ -98,6 +99,8 @@ const els = {
   seed: document.querySelector("#seed"),
   preview: document.querySelector("#preview"),
   traces: document.querySelector("#traces"),
+  errorFilter: document.querySelector("#error-filter"),
+  spanFilterCount: document.querySelector("#span-filter-count"),
   map: document.querySelector("#service-map"),
   raw: document.querySelector("#raw-output"),
   summary: document.querySelector("#summary-line"),
@@ -138,6 +141,10 @@ els.generate.addEventListener("click", () => generateTopology());
 els.load.addEventListener("click", () => els.file.click());
 els.save.addEventListener("click", () => saveTopology());
 els.file.addEventListener("change", () => loadTopologyFile());
+els.errorFilter.addEventListener("click", () => {
+  state.errorTracesOnly = !state.errorTracesOnly;
+  renderSpans(state.lastRun?.spans ?? []);
+});
 els.editor.addEventListener("input", () => {
   setValidateButton("Validate");
 });
@@ -341,12 +348,22 @@ function renderSpans(spans) {
     .slice()
     .sort(compareSpans);
   if (orderedSpans.length === 0) {
+    syncSpanFilter(0, 0);
     els.traces.innerHTML = `<p class="empty">No spans captured yet.</p>`;
     return;
   }
   const traceGroups = groupSpansByTrace(orderedSpans);
+  const errorTraceCount = traceGroups.filter((trace) => trace.errors > 0).length;
+  const visibleGroups = state.errorTracesOnly
+    ? traceGroups.filter((trace) => trace.errors > 0)
+    : traceGroups;
+  syncSpanFilter(errorTraceCount, traceGroups.length);
+  if (visibleGroups.length === 0) {
+    els.traces.innerHTML = `<p class="empty">No error traces in this run.</p>`;
+    return;
+  }
   const maxDuration = Math.max(...orderedSpans.map((span) => span.duration_ms), 1);
-  els.traces.innerHTML = traceGroups.map((trace, traceIndex) => {
+  els.traces.innerHTML = visibleGroups.map((trace, traceIndex) => {
     const panelID = `trace-panel-${traceIndex}`;
     return `<article class="trace-group ${trace.errors ? "errored" : ""}">
       <button class="trace-row" type="button" aria-expanded="${traceIndex === 0 ? "true" : "false"}" aria-controls="${panelID}">
@@ -514,6 +531,8 @@ function renderMap(topology, spans) {
 
 function clearRunOutput(message) {
   state.lastRun = null;
+  state.errorTracesOnly = false;
+  syncSpanFilter(0, 0);
   els.metrics.traces.textContent = "0";
   els.metrics.spans.textContent = "0";
   els.metrics.errors.textContent = "0%";
@@ -537,6 +556,16 @@ function setValidateButton(label, stateClass) {
   els.validate.textContent = label;
   els.validate.classList.remove("validated", "invalid");
   if (stateClass) els.validate.classList.add(stateClass);
+}
+
+function syncSpanFilter(errorTraceCount, totalTraceCount) {
+  els.errorFilter.disabled = totalTraceCount === 0;
+  els.errorFilter.setAttribute("aria-pressed", String(state.errorTracesOnly));
+  els.errorFilter.classList.toggle("active", state.errorTracesOnly);
+  els.errorFilter.textContent = state.errorTracesOnly ? "Showing errors" : "Errors only";
+  els.spanFilterCount.textContent = totalTraceCount
+    ? `${errorTraceCount} of ${totalTraceCount} traces with errors`
+    : "0 traces";
 }
 
 function setBusy(isBusy, label, { resetValidate = true } = {}) {
