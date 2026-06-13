@@ -178,6 +178,19 @@ try {
     throw new Error(`background run status did not describe worker execution: ${JSON.stringify(controlsDuringRun)}`);
   }
   await waitFor(async () => Number(await evaluate(client, `document.querySelector("#metric-spans").textContent`)) > 0, "spans captured");
+  await evaluate(client, `document.querySelector("[data-view='metrics']").click()`);
+  const metricState = await waitFor(async () => {
+    const state = await evaluate(client, `(${signalTabState})("metrics")`);
+    return state.rows > 0 && state.text.includes("gateway.request.duration") ? state : false;
+  }, "metric signal rows rendered");
+  await evaluate(client, `document.querySelector("[data-view='logs']").click()`);
+  const logState = await waitFor(async () => {
+    const state = await evaluate(client, `(${signalTabState})("logs")`);
+    return state.rows > 0 && state.text.includes("gateway handled") ? state : false;
+  }, "log signal rows rendered");
+  if (!metricState.text.includes("histogram") || !logState.text.includes("INFO")) {
+    throw new Error(`signal tabs did not expose expected details: ${JSON.stringify({ metricState, logState })}`);
+  }
 
   await setEditorValue(client, erroredTopology);
   await evaluate(client, `document.querySelector("#validate-button").click()`);
@@ -198,6 +211,21 @@ try {
     throw new Error(`error filter left non-error traces visible: ${JSON.stringify(filteredTraces)}`);
   }
   await evaluate(client, `document.querySelector("#error-filter").click()`);
+
+  await evaluate(client, `document.querySelector("[data-view='logs']").click()`);
+  const unfilteredLogs = await waitFor(async () => {
+    const state = await evaluate(client, `(${logFilterState})()`);
+    return state.total > 0 ? state : false;
+  }, "errored topology logs captured");
+  await evaluate(client, `document.querySelector("#log-severity-filter").click()`);
+  const filteredLogs = await waitFor(async () => {
+    const state = await evaluate(client, `(${logFilterState})()`);
+    return state.active && state.total <= unfilteredLogs.total ? state : false;
+  }, "log severity filter applied");
+  if (filteredLogs.infoRows !== 0) {
+    throw new Error(`log filter left info rows visible: ${JSON.stringify(filteredLogs)}`);
+  }
+  await evaluate(client, `document.querySelector("#log-severity-filter").click()`);
 
   await setEditorValue(client, invalidTopology);
   await evaluate(client, `document.querySelector("#validate-button").click()`);
@@ -411,6 +439,25 @@ function traceFilterState() {
   };
 }
 
+function signalTabState(kind) {
+  const root = document.querySelector(kind === "metrics" ? "#signal-metrics" : "#signal-logs");
+  return {
+    rows: root.querySelectorAll(".signal-item").length,
+    text: root.textContent,
+  };
+}
+
+function logFilterState() {
+  const rows = Array.from(document.querySelectorAll("#signal-logs .signal-item"));
+  return {
+    total: rows.length,
+    infoRows: rows.filter((row) => row.className.toLowerCase().includes("log-info")).length,
+    active: document.querySelector("#log-severity-filter").getAttribute("aria-pressed") === "true",
+    disabled: document.querySelector("#log-severity-filter").disabled,
+    count: document.querySelector("#log-filter-count").textContent,
+  };
+}
+
 function runControlState() {
   return {
     status: document.querySelector("#runtime-status").textContent,
@@ -427,6 +474,8 @@ function invalidValidationState() {
   const preview = document.querySelector("#preview");
   const map = document.querySelector("#service-map");
   const spans = document.querySelector("#traces");
+  const signalMetrics = document.querySelector("#signal-metrics");
+  const signalLogs = document.querySelector("#signal-logs");
   const metrics = {
     traces: document.querySelector("#metric-traces").textContent,
     spans: document.querySelector("#metric-spans").textContent,
@@ -440,16 +489,22 @@ function invalidValidationState() {
     && map.textContent.includes("Fix validation errors")
     && !spans.querySelector(".trace-group")
     && spans.textContent.includes("Fix validation errors")
+    && !signalMetrics.querySelector(".signal-item")
+    && signalMetrics.textContent.includes("Fix validation errors")
+    && !signalLogs.querySelector(".signal-item")
+    && signalLogs.textContent.includes("Fix validation errors")
     && metrics.traces === "0"
     && metrics.spans === "0"
     && metrics.errors === "0%";
-  return { cleared, validate: validate.textContent, preview: preview.textContent, map: map.textContent, spans: spans.textContent, metrics };
+  return { cleared, validate: validate.textContent, preview: preview.textContent, map: map.textContent, spans: spans.textContent, signalMetrics: signalMetrics.textContent, signalLogs: signalLogs.textContent, metrics };
 }
 
 function failedRunStateSnapshot() {
   const map = document.querySelector("#service-map");
   const preview = document.querySelector("#preview");
   const spans = document.querySelector("#traces");
+  const signalMetrics = document.querySelector("#signal-metrics");
+  const signalLogs = document.querySelector("#signal-logs");
   const metrics = {
     traces: document.querySelector("#metric-traces").textContent,
     spans: document.querySelector("#metric-spans").textContent,
@@ -462,8 +517,12 @@ function failedRunStateSnapshot() {
     && map.textContent.includes("Fix the run error")
     && !spans.querySelector(".trace-group")
     && spans.textContent.includes("Run failed")
+    && !signalMetrics.querySelector(".signal-item")
+    && signalMetrics.textContent.includes("Run failed")
+    && !signalLogs.querySelector(".signal-item")
+    && signalLogs.textContent.includes("Run failed")
     && metrics.traces === "0"
     && metrics.spans === "0"
     && metrics.errors === "0%";
-  return { cleared, summary: document.querySelector("#summary-line").textContent, preview: preview.textContent, map: map.textContent, spans: spans.textContent, metrics };
+  return { cleared, summary: document.querySelector("#summary-line").textContent, preview: preview.textContent, map: map.textContent, spans: spans.textContent, signalMetrics: signalMetrics.textContent, signalLogs: signalLogs.textContent, metrics };
 }

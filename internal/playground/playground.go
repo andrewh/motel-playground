@@ -14,7 +14,14 @@ import (
 
 	"github.com/andrewh/motel/pkg/synth"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/metric"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
 	"go.opentelemetry.io/otel/trace"
 	"gopkg.in/yaml.v3"
 )
@@ -25,6 +32,8 @@ const (
 	maxTraces           = 200
 	maxSpansPerTrace    = 500
 	maxCapturedSpans    = 1000
+	maxCapturedMetrics  = 500
+	maxCapturedLogs     = 500
 	defaultPreviewRange = 5 * time.Minute
 )
 
@@ -138,11 +147,40 @@ type SpanRecord struct {
 	Attributes      map[string]string `json:"attributes,omitempty"`
 }
 
+type MetricRecord struct {
+	Name        string            `json:"name"`
+	Type        string            `json:"type"`
+	Unit        string            `json:"unit,omitempty"`
+	Service     string            `json:"service,omitempty"`
+	Operation   string            `json:"operation,omitempty"`
+	Value       float64           `json:"value,omitempty"`
+	Count       uint64            `json:"count,omitempty"`
+	Sum         float64           `json:"sum,omitempty"`
+	Min         float64           `json:"min,omitempty"`
+	Max         float64           `json:"max,omitempty"`
+	TimestampMs int64             `json:"timestamp_ms,omitempty"`
+	StartMs     int64             `json:"start_ms,omitempty"`
+	Attributes  map[string]string `json:"attributes,omitempty"`
+}
+
+type LogRecord struct {
+	Severity    string            `json:"severity"`
+	Body        string            `json:"body"`
+	Service     string            `json:"service,omitempty"`
+	Operation   string            `json:"operation,omitempty"`
+	TimestampMs int64             `json:"timestamp_ms,omitempty"`
+	TraceID     string            `json:"trace_id,omitempty"`
+	SpanID      string            `json:"span_id,omitempty"`
+	Attributes  map[string]string `json:"attributes,omitempty"`
+}
+
 type RunResult struct {
 	OK       bool             `json:"ok"`
 	Stats    *synth.Stats     `json:"stats,omitempty"`
 	Topology *TopologySummary `json:"topology,omitempty"`
 	Spans    []SpanRecord     `json:"spans,omitempty"`
+	Metrics  []MetricRecord   `json:"metrics,omitempty"`
+	Logs     []LogRecord      `json:"logs,omitempty"`
 	Errors   []Diagnostic     `json:"errors,omitempty"`
 	Limits   RunLimits        `json:"limits"`
 }
@@ -152,11 +190,130 @@ type RunLimits struct {
 	MaxTraces        int     `json:"max_traces"`
 	MaxSpansPerTrace int     `json:"max_spans_per_trace"`
 	CapturedSpans    int     `json:"captured_spans"`
+	CapturedMetrics  int     `json:"captured_metrics"`
+	CapturedLogs     int     `json:"captured_logs"`
 }
 
 type captureObserver struct {
 	mu    sync.Mutex
 	spans []SpanRecord
+}
+
+type captureLogExporter struct {
+	mu      sync.Mutex
+	records []sdklog.Record
+}
+
+type metricCapture struct {
+	Meters    map[string]metric.Meter
+	readers   []*sdkmetric.ManualReader
+	providers []*sdkmetric.MeterProvider
+}
+
+type logCapture struct {
+	Loggers   map[string]log.Logger
+	exporter  *captureLogExporter
+	providers []*sdklog.LoggerProvider
+}
+
+func (e *captureLogExporter) Export(_ context.Context, records []sdklog.Record) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, record := range records {
+		if len(e.records) >= maxCapturedLogs {
+			return nil
+		}
+		e.records = append(e.records, record.Clone())
+	}
+	return nil
+}
+
+func (e *captureLogExporter) Shutdown(context.Context) error   { return nil }
+func (e *captureLogExporter) ForceFlush(context.Context) error { return nil }
+
+func (e *captureLogExporter) Records() []sdklog.Record {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]sdklog.Record(nil), e.records...)
+}
+
+func newMetricCapture(topo *synth.Topology) *metricCapture {
+	capture := &metricCapture{
+		Meters: make(map[string]metric.Meter, len(topo.Services)),
+	}
+	for _, serviceName := range sortedServiceNames(topo) {
+		reader := sdkmetric.NewManualReader()
+		res := resource.NewSchemaless(semconv.ServiceName(serviceName))
+		provider := sdkmetric.NewMeterProvider(
+			sdkmetric.WithReader(reader),
+			sdkmetric.WithResource(res),
+		)
+		capture.readers = append(capture.readers, reader)
+		capture.providers = append(capture.providers, provider)
+		capture.Meters[serviceName] = provider.Meter("motel")
+	}
+	return capture
+}
+
+func newLogCapture(topo *synth.Topology) *logCapture {
+	capture := &logCapture{
+		Loggers:  make(map[string]log.Logger, len(topo.Services)),
+		exporter: &captureLogExporter{},
+	}
+	for _, serviceName := range sortedServiceNames(topo) {
+		res := resource.NewSchemaless(semconv.ServiceName(serviceName))
+		provider := sdklog.NewLoggerProvider(
+			sdklog.WithProcessor(sdklog.NewSimpleProcessor(capture.exporter)),
+			sdklog.WithResource(res),
+		)
+		capture.providers = append(capture.providers, provider)
+		capture.Loggers[serviceName] = provider.Logger("motel")
+	}
+	return capture
+}
+
+func (c *logCapture) Records() []LogRecord {
+	for _, provider := range c.providers {
+		_ = provider.ForceFlush(context.Background())
+	}
+	return logRecords(c.exporter.Records())
+}
+
+func (c *logCapture) Shutdown() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	for _, provider := range c.providers {
+		_ = provider.Shutdown(ctx)
+	}
+}
+
+func (c *metricCapture) Records() []MetricRecord {
+	var out []MetricRecord
+	for _, reader := range c.readers {
+		if len(out) >= maxCapturedMetrics {
+			return out
+		}
+		var rm metricdata.ResourceMetrics
+		if err := reader.Collect(context.Background(), &rm); err != nil {
+			continue
+		}
+		out = append(out, metricRecords(rm, maxCapturedMetrics-len(out))...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TimestampMs != out[j].TimestampMs {
+			return out[i].TimestampMs < out[j].TimestampMs
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func (c *metricCapture) Shutdown() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	for _, provider := range c.providers {
+		_ = provider.Shutdown(ctx)
+	}
 }
 
 func (o *captureObserver) Observe(info synth.SpanInfo) {
@@ -244,7 +401,7 @@ func Run(source string, duration time.Duration, seed uint64) RunResult {
 		return RunResult{
 			OK:     false,
 			Errors: []Diagnostic{{Severity: "error", Message: err.Error()}},
-			Limits: limits(duration, 0),
+			Limits: limits(duration, 0, 0, 0),
 		}
 	}
 
@@ -253,11 +410,42 @@ func Run(source string, duration time.Duration, seed uint64) RunResult {
 		return RunResult{
 			OK:     false,
 			Errors: []Diagnostic{{Severity: "error", Message: err.Error()}},
-			Limits: limits(duration, 0),
+			Limits: limits(duration, 0, 0, 0),
 		}
 	}
 
 	observer := &captureObserver{}
+	metricCapture := newMetricCapture(topo)
+	defer metricCapture.Shutdown()
+	metricObserver, err := synth.NewMetricObserver(metricCapture.Meters, topo, rand.New(rand.NewPCG(seed^0xa0761d6478bd642f, seed^0xe7037ed1a0b428db)))
+	if err != nil {
+		return RunResult{
+			OK:       false,
+			Topology: summariseConfig(cfg, topo),
+			Errors:   []Diagnostic{{Severity: "error", Message: err.Error()}},
+			Limits:   limits(duration, 0, 0, 0),
+		}
+	}
+	stopMetrics := metricObserver.Start()
+	metricsStopped := false
+	defer func() {
+		if !metricsStopped {
+			stopMetrics()
+		}
+	}()
+
+	logCapture := newLogCapture(topo)
+	defer logCapture.Shutdown()
+	logObserver, err := synth.NewLogObserver(logCapture.Loggers, topo, 0, rand.New(rand.NewPCG(seed^0x8ebc6af09c88c6e3, seed^0x589965cc75374cc3)))
+	if err != nil {
+		return RunResult{
+			OK:       false,
+			Topology: summariseConfig(cfg, topo),
+			Errors:   []Diagnostic{{Severity: "error", Message: err.Error()}},
+			Limits:   limits(duration, 0, 0, 0),
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), duration+2*time.Second)
 	defer cancel()
 	tracerProvider := sdktrace.NewTracerProvider()
@@ -271,7 +459,7 @@ func Run(source string, duration time.Duration, seed uint64) RunResult {
 		Tracers:          func(serviceName string) trace.Tracer { return tracerProvider.Tracer(serviceName) },
 		Rng:              rng,
 		Duration:         duration,
-		Observers:        []synth.SpanObserver{observer},
+		Observers:        []synth.SpanObserver{observer, metricObserver, logObserver},
 		MaxSpansPerTrace: maxSpansPerTrace,
 		MaxTraces:        maxTraces,
 		State:            synth.NewSimulationState(topo),
@@ -284,17 +472,23 @@ func Run(source string, duration time.Duration, seed uint64) RunResult {
 			OK:       false,
 			Topology: summariseConfig(cfg, topo),
 			Errors:   []Diagnostic{{Severity: "error", Message: err.Error()}},
-			Limits:   limits(duration, 0),
+			Limits:   limits(duration, 0, 0, 0),
 		}
 	}
 
 	spans := observer.Records()
+	stopMetrics()
+	metricsStopped = true
+	metrics := metricCapture.Records()
+	logs := logCapture.Records()
 	return RunResult{
 		OK:       true,
 		Stats:    stats,
 		Topology: summariseConfig(cfg, topo),
 		Spans:    spans,
-		Limits:   limits(duration, len(spans)),
+		Metrics:  metrics,
+		Logs:     logs,
+		Limits:   limits(duration, len(spans), len(metrics), len(logs)),
 	}
 }
 
@@ -699,12 +893,14 @@ func inferPreviewDuration(scenarios []synth.Scenario) time.Duration {
 	return time.Duration(float64(latest) * 1.1)
 }
 
-func limits(duration time.Duration, captured int) RunLimits {
+func limits(duration time.Duration, spans int, metrics int, logs int) RunLimits {
 	return RunLimits{
 		DurationSeconds:  duration.Seconds(),
 		MaxTraces:        maxTraces,
 		MaxSpansPerTrace: maxSpansPerTrace,
-		CapturedSpans:    captured,
+		CapturedSpans:    spans,
+		CapturedMetrics:  metrics,
+		CapturedLogs:     logs,
 	}
 }
 
@@ -732,6 +928,182 @@ func attributes(attrs []attribute.KeyValue) map[string]string {
 		out[string(attr.Key)] = attr.Value.AsString()
 	}
 	return out
+}
+
+func metricRecords(rm metricdata.ResourceMetrics, remaining int) []MetricRecord {
+	if remaining <= 0 {
+		return nil
+	}
+	service := resourceAttribute(rm.Resource, string(semconv.ServiceNameKey))
+	var out []MetricRecord
+	for _, scope := range rm.ScopeMetrics {
+		for _, metric := range scope.Metrics {
+			out = append(out, recordsForMetric(metric, service, remaining-len(out))...)
+			if len(out) >= remaining {
+				return out
+			}
+		}
+	}
+	return out
+}
+
+func recordsForMetric(metric metricdata.Metrics, service string, remaining int) []MetricRecord {
+	switch data := metric.Data.(type) {
+	case metricdata.Gauge[int64]:
+		return numberDataPointRecords(metric.Name, "gauge", metric.Unit, service, data.DataPoints, remaining)
+	case metricdata.Gauge[float64]:
+		return numberDataPointRecords(metric.Name, "gauge", metric.Unit, service, data.DataPoints, remaining)
+	case metricdata.Sum[int64]:
+		return numberDataPointRecords(metric.Name, "counter", metric.Unit, service, data.DataPoints, remaining)
+	case metricdata.Sum[float64]:
+		return numberDataPointRecords(metric.Name, "counter", metric.Unit, service, data.DataPoints, remaining)
+	case metricdata.Histogram[int64]:
+		return histogramRecords(metric.Name, metric.Unit, service, data.DataPoints, remaining)
+	case metricdata.Histogram[float64]:
+		return histogramRecords(metric.Name, metric.Unit, service, data.DataPoints, remaining)
+	default:
+		return nil
+	}
+}
+
+func numberDataPointRecords[N int64 | float64](name, typ, unit, service string, dataPoints []metricdata.DataPoint[N], remaining int) []MetricRecord {
+	out := make([]MetricRecord, 0, min(len(dataPoints), remaining))
+	for _, point := range dataPoints {
+		if len(out) >= remaining {
+			break
+		}
+		attrs := attributeSet(point.Attributes)
+		out = append(out, MetricRecord{
+			Name:        name,
+			Type:        typ,
+			Unit:        unit,
+			Service:     service,
+			Operation:   popAttribute(attrs, "operation.name"),
+			Value:       float64(point.Value),
+			TimestampMs: unixMilli(point.Time),
+			StartMs:     unixMilli(point.StartTime),
+			Attributes:  emptyMapNil(attrs),
+		})
+	}
+	return out
+}
+
+func histogramRecords[N int64 | float64](name, unit, service string, dataPoints []metricdata.HistogramDataPoint[N], remaining int) []MetricRecord {
+	out := make([]MetricRecord, 0, min(len(dataPoints), remaining))
+	for _, point := range dataPoints {
+		if len(out) >= remaining {
+			break
+		}
+		attrs := attributeSet(point.Attributes)
+		out = append(out, MetricRecord{
+			Name:        name,
+			Type:        "histogram",
+			Unit:        unit,
+			Service:     service,
+			Operation:   popAttribute(attrs, "operation.name"),
+			Count:       point.Count,
+			Sum:         float64(point.Sum),
+			Min:         extremaValue(point.Min),
+			Max:         extremaValue(point.Max),
+			TimestampMs: unixMilli(point.Time),
+			StartMs:     unixMilli(point.StartTime),
+			Attributes:  emptyMapNil(attrs),
+		})
+	}
+	return out
+}
+
+func logRecords(records []sdklog.Record) []LogRecord {
+	out := make([]LogRecord, 0, min(len(records), maxCapturedLogs))
+	for _, record := range records {
+		if len(out) >= maxCapturedLogs {
+			break
+		}
+		attrs := logAttributes(record)
+		service := resourceAttribute(record.Resource(), string(semconv.ServiceNameKey))
+		traceID := record.TraceID().String()
+		if strings.Trim(traceID, "0") == "" {
+			traceID = ""
+		}
+		spanID := record.SpanID().String()
+		if strings.Trim(spanID, "0") == "" {
+			spanID = ""
+		}
+		out = append(out, LogRecord{
+			Severity:    emptyFallback(record.SeverityText(), record.Severity().String()),
+			Body:        record.Body().AsString(),
+			Service:     service,
+			Operation:   popAttribute(attrs, "operation.name"),
+			TimestampMs: unixMilli(record.Timestamp()),
+			TraceID:     traceID,
+			SpanID:      spanID,
+			Attributes:  emptyMapNil(attrs),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TimestampMs != out[j].TimestampMs {
+			return out[i].TimestampMs < out[j].TimestampMs
+		}
+		return out[i].Severity < out[j].Severity
+	})
+	return out
+}
+
+func attributeSet(set attribute.Set) map[string]string {
+	out := make(map[string]string, set.Len())
+	for iter := set.Iter(); iter.Next(); {
+		attr := iter.Attribute()
+		out[string(attr.Key)] = attr.Value.AsString()
+	}
+	return out
+}
+
+func logAttributes(record sdklog.Record) map[string]string {
+	out := make(map[string]string, record.AttributesLen())
+	record.WalkAttributes(func(kv log.KeyValue) bool {
+		out[kv.Key] = kv.Value.String()
+		return true
+	})
+	return out
+}
+
+func resourceAttribute(res *resource.Resource, key string) string {
+	if res == nil {
+		return ""
+	}
+	value, ok := res.Set().Value(attribute.Key(key))
+	if !ok {
+		return ""
+	}
+	return value.AsString()
+}
+
+func popAttribute(attrs map[string]string, key string) string {
+	value := attrs[key]
+	delete(attrs, key)
+	return value
+}
+
+func emptyMapNil(attrs map[string]string) map[string]string {
+	if len(attrs) == 0 {
+		return nil
+	}
+	return attrs
+}
+
+func unixMilli(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixMilli()
+}
+
+func extremaValue[N int64 | float64](value metricdata.Extrema[N]) float64 {
+	v, defined := value.Value()
+	if !defined {
+		return 0
+	}
+	return float64(v)
 }
 
 func ToJSON(value any) string {

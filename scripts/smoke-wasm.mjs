@@ -13,6 +13,13 @@ go.run(instance);
 const topology = `version: 1
 services:
   gateway:
+    metrics:
+      - name: gateway.request.duration
+        type: histogram
+        unit: ms
+    logs:
+      - severity: INFO
+        body: "gateway handled {operation.name}"
     operations:
       GET /:
         duration: 5ms +/- 1ms
@@ -88,6 +95,12 @@ if (!activeShapeSvg.includes('data-shape-max-spans="3"') || !activeShapeSvg.incl
 const run = JSON.parse(await globalThis.motelRun(topology, 1, 7));
 if (!run.ok || run.stats.traces < 1 || run.spans.length < 1) {
   throw new Error(`run did not capture spans: ${JSON.stringify(run)}`);
+}
+if (!run.metrics?.some((metric) => metric.name === "gateway.request.duration" && metric.type === "histogram" && metric.service === "gateway" && metric.count > 0)) {
+  throw new Error(`run did not capture topology metrics: ${JSON.stringify(run.metrics)}`);
+}
+if (!run.logs?.some((log) => log.severity === "INFO" && log.body.includes("gateway handled") && log.service === "gateway" && log.operation === "GET /")) {
+  throw new Error(`run did not capture topology logs: ${JSON.stringify(run.logs)}`);
 }
 if (run.limits.duration_seconds !== 1) {
   throw new Error(`default one-second run changed unexpectedly: ${JSON.stringify(run.limits)}`);
