@@ -3,6 +3,8 @@
 Static web playground for experimenting with
 [`motel`](https://github.com/andrewh/motel) topologies in the browser.
 
+Hosted playground: <https://andrewh.github.io/motel-playground/>.
+
 This repo follows the direction from `andrewh/motel#148`: keep the playground in
 a separate repository, depend on `motel` locally while the experiment is young,
 and start with a WASM-first implementation that can grow
@@ -52,6 +54,18 @@ make test
 
 The browser smoke test launches headless Chrome. Set `CHROME_BIN` if Chrome is
 not on your `PATH` or in the default macOS application location.
+
+## Deployment
+
+GitHub Pages is deployed from the `Deploy playground` workflow on pushes to
+`main` and from manual `workflow_dispatch` runs. The workflow checks out the
+submodule, runs `make build`, and uploads the `web/` directory as the Pages
+artifact, including the generated `web/motel.wasm` and `web/wasm_exec.js`
+runtime files.
+
+Pages must be configured to use GitHub Actions as its build and deployment
+source. The static app uses relative asset paths, so the same `web/` files work
+both at <http://localhost:8080> and under the `/motel-playground/` Pages path.
 
 ## Motel submodule
 
