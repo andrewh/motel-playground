@@ -211,14 +211,30 @@ async function run() {
 }
 
 async function generateTopology() {
-  const seed = Math.max(1, Math.floor(Number(els.seed.value) || Date.now()));
+  const currentSeed = Math.max(1, Math.floor(Number(els.seed.value) || 0));
+  const seed = nextRandomSeed(currentSeed);
   const topology = randomTopologyYaml(seed);
+  els.seed.value = String(seed);
   els.editor.value = topology;
   els.summary.classList.remove("bad");
   els.summary.textContent = "Generated topology";
   clearRunOutput(emptyCopy.spans);
   els.raw.textContent = "";
   if (state.ready) await validate({ passive: true });
+}
+
+function nextRandomSeed(previousSeed) {
+  const maxSeed = 0x7fffffff;
+  const values = new Uint32Array(1);
+  if (window.crypto?.getRandomValues) {
+    window.crypto.getRandomValues(values);
+  } else {
+    values[0] = Math.floor(Math.random() * maxSeed);
+  }
+  let seed = values[0] % maxSeed;
+  if (seed <= 0) seed = 1;
+  if (seed === previousSeed) seed = (seed % maxSeed) + 1;
+  return seed;
 }
 
 async function loadTopologyFile() {

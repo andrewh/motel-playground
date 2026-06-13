@@ -109,6 +109,13 @@ try {
   }, "service map rendered");
 
   const sampleTopology = await evaluate(client, `document.querySelector("#editor").value`);
+  const firstRandom = await generateDifferentTopology(client, sampleTopology);
+  const secondRandom = await generateDifferentTopology(client, firstRandom.value);
+  if (firstRandom.seed === secondRandom.seed) {
+    throw new Error(`random topology reused seed ${firstRandom.seed}`);
+  }
+  await setEditorValue(client, sampleTopology);
+
   const durationControl = await evaluate(client, `(() => {
     const input = document.querySelector("#duration");
     return { value: input.value, min: input.min, step: input.step };
@@ -274,6 +281,17 @@ async function setEditorValue(client, value) {
       editor.dispatchEvent(new Event("input", { bubbles: true }));
     })()
   `);
+}
+
+async function generateDifferentTopology(client, previousValue) {
+  await evaluate(client, `document.querySelector("#generate-button").click()`);
+  return waitFor(async () => {
+    const snapshot = await evaluate(client, `(() => ({
+      value: document.querySelector("#editor").value,
+      seed: document.querySelector("#seed").value,
+    }))()`);
+    return snapshot.value !== previousValue && snapshot.value.includes(`# Seed: ${snapshot.seed}`) ? snapshot : false;
+  }, "random topology changed");
 }
 
 function mapRenderState() {
