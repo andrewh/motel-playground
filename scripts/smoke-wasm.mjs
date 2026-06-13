@@ -44,6 +44,9 @@ const run = JSON.parse(await globalThis.motelRun(topology, 1, 7));
 if (!run.ok || run.stats.traces < 1 || run.spans.length < 1) {
   throw new Error(`run did not capture spans: ${JSON.stringify(run)}`);
 }
+if (run.limits.duration_seconds !== 1) {
+  throw new Error(`default one-second run changed unexpectedly: ${JSON.stringify(run.limits)}`);
+}
 const orderedSpans = run.spans.slice().sort((a, b) => a.timestamp_ms - b.timestamp_ms);
 if (orderedSpans[0].service !== "gateway") {
   throw new Error(`earliest span should be gateway, got ${orderedSpans[0].service}`);
@@ -53,6 +56,11 @@ if (!orderedSpans.every((span) => span.trace_id && !/^0+$/.test(span.trace_id) &
 }
 if (new Set(orderedSpans.map((span) => span.trace_id)).size < 1) {
   throw new Error("run did not include trace IDs");
+}
+
+const fractionalRun = JSON.parse(await globalThis.motelRun(topology, 0.5, 7));
+if (!fractionalRun.ok || Math.abs(fractionalRun.limits.duration_seconds - 0.5) > 0.001) {
+  throw new Error(`fractional duration was not preserved: ${JSON.stringify(fractionalRun)}`);
 }
 
 for (const seed of [1, 42, 777, 2026]) {

@@ -21,7 +21,7 @@ import (
 
 const (
 	maxDuration         = 10 * time.Second
-	defaultDuration     = 2 * time.Second
+	defaultDuration     = time.Second
 	maxTraces           = 200
 	maxSpansPerTrace    = 500
 	maxCapturedSpans    = 1000
