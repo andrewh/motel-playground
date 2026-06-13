@@ -1,0 +1,3 @@
+[submodule "third_party/motel"]
+	path = third_party/motel
+	url = https://github.com/andrewh/motel.git
