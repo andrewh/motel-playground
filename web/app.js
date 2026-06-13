@@ -94,6 +94,7 @@ const els = {
   validate: document.querySelector("#validate-button"),
   run: document.querySelector("#run-button"),
   duration: document.querySelector("#duration"),
+  maxNodes: document.querySelector("#max-nodes"),
   seed: document.querySelector("#seed"),
   preview: document.querySelector("#preview"),
   traces: document.querySelector("#traces"),
@@ -213,7 +214,7 @@ async function run() {
 async function generateTopology() {
   const currentSeed = Math.max(1, Math.floor(Number(els.seed.value) || 0));
   const seed = nextRandomSeed(currentSeed);
-  const topology = randomTopologyYaml(seed);
+  const topology = randomTopologyYaml(seed, { maxNodes: maxRandomNodes() });
   els.seed.value = String(seed);
   els.editor.value = topology;
   els.summary.classList.remove("bad");
@@ -235,6 +236,13 @@ function nextRandomSeed(previousSeed) {
   if (seed <= 0) seed = 1;
   if (seed === previousSeed) seed = (seed % maxSeed) + 1;
   return seed;
+}
+
+function maxRandomNodes() {
+  const min = Number(els.maxNodes.min) || 2;
+  const max = Number(els.maxNodes.max) || 12;
+  const value = Math.floor(Number(els.maxNodes.value) || max);
+  return Math.min(max, Math.max(min, value));
 }
 
 async function loadTopologyFile() {

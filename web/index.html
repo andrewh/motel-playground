@@ -44,6 +44,10 @@
               <input id="topology-file" class="file-input" type="file" accept=".yaml,.yml,text/yaml,text/x-yaml,application/x-yaml" />
               <button id="load-button" type="button">Load</button>
               <button id="save-button" type="button">Save</button>
+              <label class="field-compact">
+                Max nodes
+                <input id="max-nodes" type="number" min="2" max="12" step="1" value="8" />
+              </label>
               <button id="generate-button" type="button">Random topology</button>
               <button id="validate-button" type="button">Validate</button>
               <button id="run-button" type="button" class="primary">Run topology</button>
