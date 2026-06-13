@@ -111,11 +111,20 @@ try {
         summary: document.querySelector("#summary-line")?.textContent,
         raw: document.querySelector("#raw-output")?.textContent.slice(0, 240),
         preview: Boolean(document.querySelector("#preview svg")),
+        rateVariation: document.querySelector("#preview svg")?.dataset.rateVariation,
+        previewText: document.querySelector("#preview")?.textContent,
       }))()`);
       return runtimeState.ready;
     }, "runtime ready and preview rendered");
   } catch (error) {
     throw new Error(`${error.message}: ${JSON.stringify(runtimeState)}`);
+  }
+  if (
+    runtimeState.rateVariation !== "false"
+    || !runtimeState.previewText.includes("expected traces")
+    || !runtimeState.previewText.includes("elapsed run time (1s)")
+  ) {
+    throw new Error(`static-rate preview did not expose forecast details: ${JSON.stringify(runtimeState)}`);
   }
 
   await evaluate(client, `document.querySelector("[data-view='map']").click()`);
@@ -346,9 +355,14 @@ async function generateDifferentTopology(client, previousValue) {
     const snapshot = await evaluate(client, `(() => ({
       value: document.querySelector("#editor").value,
       seed: document.querySelector("#seed").value,
-      services: document.querySelector("#editor").value.split("\\n").filter((line) => /^  [a-z0-9-]+:$/.test(line)).length,
+      services: document.querySelector("#editor").value.split("\\ntraffic:")[0].split("\\n").filter((line) => /^  [a-z0-9-]+:$/.test(line)).length,
+      rateVariation: document.querySelector("#preview svg")?.dataset.rateVariation,
     }))()`);
-    return snapshot.value !== previousValue && snapshot.value.includes(`# Seed: ${snapshot.seed}`) ? snapshot : false;
+    return snapshot.value !== previousValue
+      && snapshot.value.includes(`# Seed: ${snapshot.seed}`)
+      && snapshot.rateVariation === "true"
+      ? snapshot
+      : false;
   }, "random topology changed");
 }
 

@@ -313,7 +313,7 @@ func Preview(source string, duration time.Duration) (string, error) {
 	if duration > 30*time.Minute {
 		duration = 30 * time.Minute
 	}
-	return renderPreviewSVG(traffic, scenarios, duration, summariseConfig(cfg, topo)), nil
+	return renderPreviewSVG(cfg.Traffic, traffic, scenarios, duration, summariseConfig(cfg, topo), topo), nil
 }
 
 func load(source string) (*synth.Config, *synth.Topology, []synth.Scenario, error) {
@@ -747,30 +747,81 @@ type rateSample struct {
 	rate    float64
 }
 
-func renderPreviewSVG(traffic synth.TrafficPattern, scenarios []synth.Scenario, duration time.Duration, summary *TopologySummary) string {
+type previewForecast struct {
+	expectedTraces     float64
+	expectedSpans      float64
+	expectedErrors     float64
+	maxSpans           int
+	maxSpansRoot       string
+	maxFanOut          int
+	maxFanOutRef       string
+	spanDist           synth.DistributionSummary
+	fanOutDist         synth.DistributionSummary
+	shapeScenarios     []string
+	rateVaries         bool
+	spanVaries         bool
+	asyncCalls         int
+	probabilisticCalls int
+	scenarioTraffic    int
+}
+
+type previewMetric struct {
+	label string
+	value string
+}
+
+func renderPreviewSVG(cfg synth.TrafficConfig, traffic synth.TrafficPattern, scenarios []synth.Scenario, duration time.Duration, summary *TopologySummary, topo *synth.Topology) string {
 	const (
 		width  = 860
-		height = 320
+		height = 500
 		left   = 64
 		right  = 24
-		top    = 34
-		bottom = 42
+		top    = 132
+		bottom = 170
 	)
 
 	plotW := width - left - right
 	plotH := height - top - bottom
 	samples := sampleRates(traffic, scenarios, duration)
 	maxRate := 1.0
+	observedMaxRate := 0.0
+	minRate := math.Inf(1)
 	for _, sample := range samples {
 		maxRate = math.Max(maxRate, sample.rate)
+		observedMaxRate = math.Max(observedMaxRate, sample.rate)
+		minRate = math.Min(minRate, sample.rate)
 	}
 	maxRate *= 1.12
+	forecast := buildPreviewForecast(topo, samples, duration, scenarios)
+	if len(samples) > 0 {
+		forecast.rateVaries = observedMaxRate-minRate > 0.001
+	}
+
+	trafficLabel := trafficPatternLabel(cfg)
+	metrics := []previewMetric{
+		{label: "expected traces", value: compactNumber(forecast.expectedTraces)},
+		{label: "expected spans", value: compactNumber(forecast.expectedSpans)},
+		{label: "expected errors", value: compactNumber(forecast.expectedErrors)},
+		{label: "root ops", value: fmt.Sprintf("%d", len(summary.Roots))},
+		{label: "max fanout", value: fmt.Sprintf("%d", forecast.maxFanOut)},
+		{label: "p95 spans/trace", value: fmt.Sprintf("%d", forecast.spanDist.P95)},
+	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" role="img" aria-label="Traffic preview">`, width, height))
-	b.WriteString(`<rect width="100%" height="100%" fill="#fbfaf7"/>`)
-	b.WriteString(`<style>text{font-family:ui-sans-serif,system-ui,sans-serif;fill:#2d332f}.label{font-size:11px;fill:#667166}.title{font-size:13px;font-weight:700}.grid{stroke:#e5e0d6;stroke-width:1}.line{fill:none;stroke:#0f766e;stroke-width:2.5;stroke-linejoin:round}.scenario{fill:#d97706;fill-opacity:.12;stroke:#d97706;stroke-opacity:.35}.scenario-label{font-size:10px;fill:#8a4b0f}</style>`)
-	b.WriteString(fmt.Sprintf(`<text x="%d" y="22" class="title">%d services, %d operations, %d call edges</text>`, left, len(summary.Services), summary.Operations, summary.Edges))
+	b.WriteString(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" role="img" aria-label="Traffic preview" data-rate-variation="%t" data-span-variation="%t" data-scenarios="%d" data-shape-max-spans="%d" data-shape-scenarios="%d">`, width, height, forecast.rateVaries, forecast.spanVaries, len(scenarios), forecast.spanDist.Max, len(forecast.shapeScenarios)))
+	b.WriteString(`<rect width="100%" height="100%" fill="#f7f7f5"/>`)
+	b.WriteString(`<style>text{font-family:ui-sans-serif,system-ui,sans-serif;fill:#262626}.label{font-size:11px;fill:#666}.eyebrow{font-size:10px;fill:#777;text-transform:uppercase}.title{font-size:14px;font-weight:720}.small{font-size:10px;fill:#777}.grid{stroke:#deded9;stroke-width:1}.axis{stroke:#9f9f98;stroke-width:1}.line{fill:none;stroke:#242424;stroke-width:2.5;stroke-linejoin:round}.scenario{fill:#777;fill-opacity:.1;stroke:#777;stroke-opacity:.35}.scenario-traffic{fill:#222;fill-opacity:.11;stroke:#222;stroke-opacity:.32}.scenario-label{font-size:10px;fill:#555}.card{fill:#fff;stroke:#d7d7d1;stroke-width:1}.card-value{font-size:17px;font-weight:720}.card-label{font-size:10px;fill:#666}.bar{fill:#2c2c2c}.bar-bg{fill:#e9e9e4}.note{font-size:11px;fill:#555}</style>`)
+	b.WriteString(fmt.Sprintf(`<text x="%d" y="24" class="title">Traffic forecast: %s over %s</text>`, left, html.EscapeString(trafficLabel), formatDuration(duration)))
+	b.WriteString(fmt.Sprintf(`<text x="%d" y="44" class="label">%d services, %d operations, %d call edges</text>`, left, len(summary.Services), summary.Operations, summary.Edges))
+
+	cardW := 116
+	cardGap := 10
+	for i, metric := range metrics {
+		x := left + i*(cardW+cardGap)
+		b.WriteString(fmt.Sprintf(`<rect x="%d" y="58" width="%d" height="48" rx="6" class="card"/>`, x, cardW))
+		b.WriteString(fmt.Sprintf(`<text x="%d" y="80" class="card-value">%s</text>`, x+10, html.EscapeString(metric.value)))
+		b.WriteString(fmt.Sprintf(`<text x="%d" y="96" class="card-label">%s</text>`, x+10, html.EscapeString(metric.label)))
+	}
 
 	for i := 0; i <= 4; i++ {
 		y := top + plotH - int(float64(i)*float64(plotH)/4)
@@ -778,15 +829,28 @@ func renderPreviewSVG(traffic synth.TrafficPattern, scenarios []synth.Scenario, 
 		b.WriteString(fmt.Sprintf(`<line x1="%d" y1="%d" x2="%d" y2="%d" class="grid"/>`, left, y, left+plotW, y))
 		b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" text-anchor="end" class="label">%.1f/s</text>`, left-8, y+4, rate))
 	}
+	b.WriteString(fmt.Sprintf(`<line x1="%d" y1="%d" x2="%d" y2="%d" class="axis"/>`, left, top+plotH, left+plotW, top+plotH))
 
 	for _, scenario := range scenarios {
-		x := left + int(float64(plotW)*float64(scenario.Start)/float64(duration))
-		w := int(float64(plotW) * float64(scenario.End-scenario.Start) / float64(duration))
+		if scenario.End <= 0 || scenario.Start >= duration {
+			continue
+		}
+		start := max(scenario.Start, 0)
+		end := min(scenario.End, duration)
+		x := left + int(float64(plotW)*float64(start)/float64(duration))
+		w := int(float64(plotW) * float64(end-start) / float64(duration))
 		if w < 1 {
 			w = 1
 		}
-		b.WriteString(fmt.Sprintf(`<rect x="%d" y="%d" width="%d" height="%d" class="scenario"/>`, x, top, w, plotH))
-		b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="scenario-label">%s</text>`, x+5, top+16, html.EscapeString(scenario.Name)))
+		className := "scenario"
+		label := scenario.Name
+		if scenario.Traffic != nil {
+			className = "scenario-traffic"
+			label += " traffic"
+		}
+		b.WriteString(fmt.Sprintf(`<rect x="%d" y="%d" width="%d" height="%d" class="%s"/>`, x, top, w, plotH, className))
+		labelX := min(max(x+5, left), left+plotW-120)
+		b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="scenario-label">%s</text>`, labelX, top-8, html.EscapeString(shorten(label, 30))))
 	}
 
 	points := make([]string, 0, len(samples))
@@ -800,21 +864,252 @@ func renderPreviewSVG(traffic synth.TrafficPattern, scenarios []synth.Scenario, 
 	for i := 0; i <= 5; i++ {
 		x := left + int(float64(i)*float64(plotW)/5)
 		elapsed := time.Duration(float64(i) * float64(duration) / 5)
-		b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" text-anchor="middle" class="label">%s</text>`, x, height-16, formatDuration(elapsed)))
+		b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" text-anchor="middle" class="label">%s</text>`, x, top+plotH+18, formatDuration(elapsed)))
 	}
+	b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" text-anchor="middle" class="small">elapsed run time (%s)</text>`, left+plotW/2, top+plotH+36, formatDuration(duration)))
+
+	if !forecast.rateVaries {
+		b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="note">Static arrival rate; forecast still uses roots, probabilities, fanout, and errors.</text>`, left, top+plotH+58))
+	}
+
+	detailY := top + plotH + 96
+	drawTraceShape(&b, forecast, left, detailY, 304, 62)
+	b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="small">largest root trace: %s</text>`, left+328, detailY+14, html.EscapeString(emptyFallback(shorten(forecast.maxSpansRoot, 42), "none"))))
+	b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="small">widest operation: %s</text>`, left+328, detailY+32, html.EscapeString(emptyFallback(shorten(forecast.maxFanOutRef, 42), "none"))))
+	b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="small">sample max: %d spans/trace, %d child calls</text>`, left+328, detailY+50, forecast.spanDist.Max, forecast.fanOutDist.Max))
+	b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="small">%d async calls, %d probabilistic calls, %d scenario traffic windows</text>`, left+328, detailY+68, forecast.asyncCalls, forecast.probabilisticCalls, forecast.scenarioTraffic))
 
 	b.WriteString(`</svg>`)
 	return b.String()
 }
 
-func sampleRates(traffic synth.TrafficPattern, scenarios []synth.Scenario, duration time.Duration) []rateSample {
-	interval := time.Second
-	if duration > 10*time.Minute {
-		interval = 5 * time.Second
+func buildPreviewForecast(topo *synth.Topology, samples []rateSample, duration time.Duration, scenarios []synth.Scenario) previewForecast {
+	shapeScenarios := overlappingScenarios(scenarios, duration)
+	checks := synth.Check(topo, synth.CheckOptions{
+		MaxDepth:         12,
+		MaxFanOut:        12,
+		MaxSpans:         maxSpansPerTrace,
+		MaxSpansPerTrace: maxSpansPerTrace,
+		Samples:          64,
+		Seed:             17,
+		Scenarios:        shapeScenarios,
+	})
+	spanCheck := findCheck(checks, "max-spans")
+	fanOutCheck := findCheck(checks, "max-fan-out")
+	spanDist := distributionOrZero(spanCheck)
+	fanOutDist := distributionOrZero(fanOutCheck)
+	typicalSpans := spanDist.P50
+	if typicalSpans == 0 && len(topo.Roots) > 0 {
+		typicalSpans = 1
 	}
-	count := int(duration/interval) + 1
+	maxSpans, maxSpansRoot := synth.MaxSpans(topo)
+	maxFanOut := fanOutCheck.Actual
+	maxFanOutRef := fanOutCheck.Ref
+	if maxFanOut == 0 {
+		maxFanOut, maxFanOutRef = synth.MaxFanOut(topo)
+	}
+	asyncCalls, probabilisticCalls := callShape(topo)
+	scenarioTraffic := 0
+	for _, scenario := range scenarios {
+		if scenario.Traffic != nil {
+			scenarioTraffic++
+		}
+	}
+	expectedTraces := integrateRates(samples, duration)
+	return previewForecast{
+		expectedTraces:     expectedTraces,
+		expectedSpans:      expectedTraces * float64(typicalSpans),
+		expectedErrors:     expectedTraces * expectedErrorsPerTrace(topo),
+		maxSpans:           maxSpans,
+		maxSpansRoot:       maxSpansRoot,
+		maxFanOut:          maxFanOut,
+		maxFanOutRef:       maxFanOutRef,
+		spanDist:           spanDist,
+		fanOutDist:         fanOutDist,
+		shapeScenarios:     spanCheck.Scenarios,
+		spanVaries:         spanDist.P50 != spanDist.Max,
+		asyncCalls:         asyncCalls,
+		probabilisticCalls: probabilisticCalls,
+		scenarioTraffic:    scenarioTraffic,
+	}
+}
+
+func overlappingScenarios(scenarios []synth.Scenario, duration time.Duration) []synth.Scenario {
+	if duration <= 0 {
+		return nil
+	}
+	active := make([]synth.Scenario, 0, len(scenarios))
+	for _, scenario := range scenarios {
+		if scenario.End > 0 && scenario.Start < duration {
+			active = append(active, scenario)
+		}
+	}
+	return active
+}
+
+func findCheck(checks []synth.CheckResult, name string) synth.CheckResult {
+	for _, check := range checks {
+		if check.Name == name {
+			return check
+		}
+	}
+	return synth.CheckResult{}
+}
+
+func distributionOrZero(check synth.CheckResult) synth.DistributionSummary {
+	if check.Distribution == nil {
+		return synth.DistributionSummary{}
+	}
+	return *check.Distribution
+}
+
+func integrateRates(samples []rateSample, duration time.Duration) float64 {
+	if len(samples) == 0 || duration <= 0 {
+		return 0
+	}
+	if len(samples) == 1 {
+		return samples[0].rate * duration.Seconds()
+	}
+	var total float64
+	for i := 1; i < len(samples); i++ {
+		seconds := samples[i].elapsed.Seconds() - samples[i-1].elapsed.Seconds()
+		if seconds <= 0 {
+			continue
+		}
+		total += ((samples[i-1].rate + samples[i].rate) / 2) * seconds
+	}
+	return total
+}
+
+func expectedErrorsPerTrace(topo *synth.Topology) float64 {
+	if len(topo.Roots) == 0 {
+		return 0
+	}
+	var total float64
+	for _, root := range topo.Roots {
+		total += expectedErrorsFromOperation(root, make(map[*synth.Operation]bool))
+	}
+	return total / float64(len(topo.Roots))
+}
+
+func expectedErrorsFromOperation(op *synth.Operation, visited map[*synth.Operation]bool) float64 {
+	if visited[op] {
+		return 0
+	}
+	visited[op] = true
+	defer delete(visited, op)
+
+	total := op.ErrorRate
+	for _, call := range op.Calls {
+		probability := call.Probability
+		if probability <= 0 {
+			probability = 1
+		}
+		count := max(call.Count, 1) * (1 + call.Retries)
+		total += probability * float64(count) * expectedErrorsFromOperation(call.Operation, visited)
+	}
+	return total
+}
+
+func callShape(topo *synth.Topology) (asyncCalls int, probabilisticCalls int) {
+	for _, svc := range topo.Services {
+		for _, op := range svc.Operations {
+			for _, call := range op.Calls {
+				if call.Async {
+					asyncCalls++
+				}
+				if call.Probability > 0 && call.Probability < 1 {
+					probabilisticCalls++
+				}
+			}
+		}
+	}
+	return asyncCalls, probabilisticCalls
+}
+
+func drawTraceShape(b *strings.Builder, forecast previewForecast, x, y, width, height int) {
+	label := "trace shape sample"
+	if len(forecast.shapeScenarios) > 0 {
+		label += ": " + shorten(strings.Join(forecast.shapeScenarios, ", "), 28)
+	}
+	b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="eyebrow">%s</text>`, x, y-10, html.EscapeString(label)))
+	b.WriteString(fmt.Sprintf(`<rect x="%d" y="%d" width="%d" height="%d" rx="4" class="bar-bg"/>`, x, y, width, height))
+	b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="card-value">%d</text>`, x+12, y+28, forecast.spanDist.P50))
+	b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="card-label">p50 spans</text>`, x+12, y+46))
+	b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="card-value">%d</text>`, x+118, y+28, forecast.spanDist.P95))
+	b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="card-label">p95 spans</text>`, x+118, y+46))
+	b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="card-value">%d</text>`, x+222, y+28, forecast.spanDist.Max))
+	b.WriteString(fmt.Sprintf(`<text x="%d" y="%d" class="card-label">max spans</text>`, x+222, y+46))
+}
+
+func trafficPatternLabel(cfg synth.TrafficConfig) string {
+	pattern := trafficPatternName(cfg)
+	if cfg.Rate != "" {
+		pattern += " " + cfg.Rate
+	}
+	if cfg.Overlay != nil {
+		pattern += " + " + trafficPatternName(*cfg.Overlay) + " overlay"
+	}
+	return pattern
+}
+
+func trafficPatternName(cfg synth.TrafficConfig) string {
+	switch cfg.Pattern {
+	case "", "uniform":
+		return "uniform"
+	case "diurnal":
+		return "short-period diurnal"
+	case "bursty":
+		return "bursty"
+	case "custom":
+		return "custom segments"
+	default:
+		return cfg.Pattern
+	}
+}
+
+func compactNumber(value float64) string {
+	abs := math.Abs(value)
+	switch {
+	case abs >= 1_000_000:
+		return fmt.Sprintf("%.1fm", value/1_000_000)
+	case abs >= 10_000:
+		return fmt.Sprintf("%.0fk", value/1_000)
+	case abs >= 1_000:
+		return fmt.Sprintf("%.1fk", value/1_000)
+	case abs >= 100:
+		return fmt.Sprintf("%.0f", value)
+	case abs >= 10:
+		return fmt.Sprintf("%.1f", value)
+	case abs >= 0.05:
+		return fmt.Sprintf("%.1f", value)
+	default:
+		return "0"
+	}
+}
+
+func emptyFallback(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func shorten(value string, limit int) string {
+	if len(value) <= limit || limit <= 0 {
+		return value
+	}
+	if limit <= 3 {
+		return value[:limit]
+	}
+	return value[:limit-3] + "..."
+}
+
+func sampleRates(traffic synth.TrafficPattern, scenarios []synth.Scenario, duration time.Duration) []rateSample {
+	interval := previewSampleInterval(duration)
+	count := int(duration/interval) + 2
 	samples := make([]rateSample, 0, count)
-	for elapsed := time.Duration(0); elapsed <= duration; elapsed += interval {
+	for elapsed := time.Duration(0); elapsed < duration; elapsed += interval {
 		rate := traffic.Rate(elapsed)
 		active := synth.ActiveScenarios(scenarios, elapsed)
 		if override := synth.ResolveTraffic(active); override != nil {
@@ -822,10 +1117,34 @@ func sampleRates(traffic synth.TrafficPattern, scenarios []synth.Scenario, durat
 		}
 		samples = append(samples, rateSample{elapsed: elapsed, rate: rate})
 	}
+	if len(samples) == 0 || samples[len(samples)-1].elapsed != duration {
+		rate := traffic.Rate(duration)
+		active := synth.ActiveScenarios(scenarios, duration)
+		if override := synth.ResolveTraffic(active); override != nil {
+			rate = override.Rate(duration)
+		}
+		samples = append(samples, rateSample{elapsed: duration, rate: rate})
+	}
 	return samples
 }
 
+func previewSampleInterval(duration time.Duration) time.Duration {
+	switch {
+	case duration <= time.Second:
+		return max(duration/40, 25*time.Millisecond)
+	case duration <= 10*time.Second:
+		return max(duration/80, 50*time.Millisecond)
+	case duration > 10*time.Minute:
+		return 5 * time.Second
+	default:
+		return time.Second
+	}
+}
+
 func formatDuration(d time.Duration) string {
+	if d > 0 && d < time.Second {
+		return fmt.Sprintf("%.0fms", float64(d)/float64(time.Millisecond))
+	}
 	if d >= time.Minute {
 		return fmt.Sprintf("%.0fm", d.Minutes())
 	}

@@ -27,6 +27,34 @@ traffic:
   rate: 5/s
 `;
 
+const scenarioShapeTopology = `version: 1
+services:
+  gateway:
+    operations:
+      GET /:
+        duration: 5ms +/- 1ms
+        calls:
+          - worker.job
+  worker:
+    operations:
+      job:
+        duration: 3ms +/- 1ms
+  cache:
+    operations:
+      get:
+        duration: 1ms +/- 1ms
+traffic:
+  rate: 5/s
+scenarios:
+  - name: fallback fanout
+    at: +200ms
+    duration: 600ms
+    override:
+      worker.job:
+        add_calls:
+          - target: cache.get
+`;
+
 const validation = JSON.parse(await globalThis.motelValidate(topology));
 if (!validation.ok) {
   throw new Error(`validation failed: ${JSON.stringify(validation.diagnostics)}`);
@@ -38,6 +66,23 @@ if (!validation.topology.graph || validation.topology.graph.nodes.length !== 2 |
 const svg = await globalThis.motelPreview(topology, 60);
 if (!svg.startsWith("<svg") || !svg.includes("polyline")) {
   throw new Error("preview did not return an SVG chart");
+}
+if (
+  !svg.includes("expected traces")
+  || !svg.includes("trace shape sample")
+  || !svg.includes("elapsed run time")
+  || !svg.includes('data-rate-variation="false"')
+) {
+  throw new Error("static-rate preview did not include forecast details");
+}
+
+const inactiveShapeSvg = await globalThis.motelPreview(scenarioShapeTopology, 0.1);
+const activeShapeSvg = await globalThis.motelPreview(scenarioShapeTopology, 1);
+if (!inactiveShapeSvg.includes('data-shape-max-spans="2"') || !inactiveShapeSvg.includes('data-shape-scenarios="0"')) {
+  throw new Error("duration before scenario window should use the baseline trace shape");
+}
+if (!activeShapeSvg.includes('data-shape-max-spans="3"') || !activeShapeSvg.includes('data-shape-scenarios="1"')) {
+  throw new Error("duration overlapping scenario window should include scenario call-shape changes");
 }
 
 const run = JSON.parse(await globalThis.motelRun(topology, 1, 7));
@@ -65,9 +110,16 @@ if (!fractionalRun.ok || Math.abs(fractionalRun.limits.duration_seconds - 0.5) >
 
 for (const seed of [1, 42, 777, 2026]) {
   const generated = randomTopologyYaml(seed);
+  if (!generated.includes("pattern:") || !generated.includes("    traffic:")) {
+    throw new Error(`generated topology ${seed} did not include rich traffic syntax:\n${generated}`);
+  }
   const generatedValidation = JSON.parse(await globalThis.motelValidate(generated));
   if (!generatedValidation.ok) {
     throw new Error(`generated topology ${seed} failed validation: ${JSON.stringify(generatedValidation.diagnostics)}`);
+  }
+  const generatedSvg = await globalThis.motelPreview(generated, 60);
+  if (!generatedSvg.includes('data-rate-variation="true"')) {
+    throw new Error(`generated topology ${seed} did not produce non-flat traffic preview`);
   }
   const generatedRun = JSON.parse(await globalThis.motelRun(generated, 1, seed));
   if (!generatedRun.ok || generatedRun.stats.traces < 1 || generatedRun.spans.length < 1) {
