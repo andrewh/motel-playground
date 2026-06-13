@@ -109,7 +109,14 @@ try {
   }, "service map rendered");
 
   const sampleTopology = await evaluate(client, `document.querySelector("#editor").value`);
-  await evaluate(client, `document.querySelector("#duration").value = "1"`);
+  const durationControl = await evaluate(client, `(() => {
+    const input = document.querySelector("#duration");
+    return { value: input.value, min: input.min, step: input.step };
+  })()`);
+  if (durationControl.value !== "1" || durationControl.min !== "0.1" || durationControl.step !== "0.1") {
+    throw new Error(`duration control does not default to one-second fractional input: ${JSON.stringify(durationControl)}`);
+  }
+  await evaluate(client, `document.querySelector("#duration").value = "0.5"`);
   await evaluate(client, `document.querySelector("#run-button").click()`);
   await waitFor(async () => Number(await evaluate(client, `document.querySelector("#metric-spans").textContent`)) > 0, "spans captured");
 

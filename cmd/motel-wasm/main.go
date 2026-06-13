@@ -3,6 +3,7 @@
 package main
 
 import (
+	"math"
 	"strconv"
 	"syscall/js"
 	"time"
@@ -16,7 +17,7 @@ func main() {
 		return playground.ToJSON(playground.Validate(args[0].String())), nil
 	}))
 	js.Global().Set("motelRun", async(func(args []js.Value) (string, error) {
-		duration := secondsArg(args, 1, 2)
+		duration := secondsArg(args, 1, 1)
 		seed := uint64(numberArg(args, 2, 1))
 		return playground.ToJSON(playground.Run(args[0].String(), duration, seed)), nil
 	}))
@@ -48,12 +49,32 @@ func async(fn asyncFunc) js.Func {
 	})
 }
 
-func secondsArg(args []js.Value, index int, fallback int) time.Duration {
-	value := numberArg(args, index, fallback)
+func secondsArg(args []js.Value, index int, fallback float64) time.Duration {
+	value := floatArg(args, index, fallback)
 	if value <= 0 {
 		value = fallback
 	}
-	return time.Duration(value) * time.Second
+	return time.Duration(value * float64(time.Second))
+}
+
+func floatArg(args []js.Value, index int, fallback float64) float64 {
+	if len(args) <= index {
+		return fallback
+	}
+	value := args[index]
+	if value.Type() == js.TypeNumber {
+		n := value.Float()
+		if !math.IsNaN(n) && !math.IsInf(n, 0) {
+			return n
+		}
+	}
+	if value.Type() == js.TypeString {
+		parsed, err := strconv.ParseFloat(value.String(), 64)
+		if err == nil && !math.IsNaN(parsed) && !math.IsInf(parsed, 0) {
+			return parsed
+		}
+	}
+	return fallback
 }
 
 func numberArg(args []js.Value, index int, fallback int) int {
