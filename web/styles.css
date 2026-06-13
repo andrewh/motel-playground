@@ -853,17 +853,95 @@ input {
   overflow-wrap: anywhere;
 }
 
-pre {
+.raw-output {
   min-height: 100%;
   margin: 0;
   border-radius: var(--radius-sm);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  overflow: auto;
   color: var(--code-ink);
   background: var(--code-bg);
   padding: var(--space-4);
   font: 0.78rem/1.55 var(--font-code);
   font-variant-ligatures: none;
+}
+
+.raw-output.raw-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.raw-output.raw-json {
+  white-space: normal;
+}
+
+.json-node {
+  margin: 0;
+}
+
+.json-node summary {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  min-height: 26px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.json-node summary::-webkit-details-marker {
+  display: none;
+}
+
+.json-node summary::before {
+  content: ">";
+  flex: 0 0 auto;
+  color: color-mix(in oklch, var(--code-ink), transparent 45%);
+  transform: translateY(-1px);
+  transition: transform 120ms var(--ease-out);
+}
+
+.json-node[open] > summary::before {
+  transform: rotate(90deg) translateX(1px);
+}
+
+.json-node summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.json-children {
+  margin-left: 7px;
+  padding-left: var(--space-4);
+  border-left: 1px solid color-mix(in oklch, var(--code-ink), transparent 82%);
+}
+
+.json-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  min-height: 24px;
+}
+
+.json-key {
+  color: var(--code-ink);
+  font-weight: 680;
+}
+
+.json-key::after {
+  content: ":";
+  color: color-mix(in oklch, var(--code-ink), transparent 45%);
+  font-weight: 450;
+}
+
+.json-type,
+.json-empty {
+  color: color-mix(in oklch, var(--code-ink), transparent 38%);
+  font-size: 0.72rem;
+}
+
+.json-scalar {
+  overflow-wrap: anywhere;
+  color: color-mix(in oklch, var(--code-ink), transparent 14%);
 }
 
 @keyframes reveal {
