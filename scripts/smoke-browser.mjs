@@ -110,6 +110,7 @@ try {
         status: document.querySelector("#runtime-status")?.textContent,
         summary: document.querySelector("#summary-line")?.textContent,
         raw: document.querySelector("#raw-output")?.textContent.slice(0, 240),
+        rawDetails: document.querySelectorAll("#raw-output details").length,
         preview: Boolean(document.querySelector("#preview svg")),
         rateVariation: document.querySelector("#preview svg")?.dataset.rateVariation,
         previewText: document.querySelector("#preview")?.textContent,
@@ -123,6 +124,7 @@ try {
     runtimeState.rateVariation !== "false"
     || !runtimeState.previewText.includes("expected traces")
     || !runtimeState.previewText.includes("elapsed run time (1s)")
+    || runtimeState.rawDetails < 1
   ) {
     throw new Error(`static-rate preview did not expose forecast details: ${JSON.stringify(runtimeState)}`);
   }

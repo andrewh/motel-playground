@@ -188,7 +188,7 @@ async function loadWasm() {
   } catch (error) {
     els.status.textContent = "Build runtime first";
     els.status.classList.add("error");
-    els.raw.textContent = String(error);
+    renderRawText(String(error));
   }
 }
 
@@ -205,7 +205,7 @@ async function validate({ passive = false } = {}) {
     if (valid) {
       await renderPreview();
     }
-    els.raw.textContent = JSON.stringify(result, null, 2);
+    renderRawOutput(result);
   } finally {
     setRuntimeBusy(false);
     if (!passive) {
@@ -229,7 +229,7 @@ async function run() {
     }));
     if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
     renderRun(result);
-    els.raw.textContent = JSON.stringify(result, null, 2);
+    renderRawOutput(result);
   } catch (error) {
     if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
     renderRunWorkerError(error);
@@ -249,7 +249,7 @@ async function generateTopology() {
   els.summary.classList.remove("bad");
   els.summary.textContent = "Generated topology";
   clearRunOutput(emptyCopy.spans);
-  els.raw.textContent = "";
+  clearRawOutput();
   if (state.ready) await validate({ passive: true });
 }
 
@@ -282,7 +282,7 @@ async function loadTopologyFile() {
     els.summary.classList.remove("bad", "good");
     els.summary.textContent = `Loaded ${file.name}`;
     clearRunOutput(emptyCopy.spans);
-    els.raw.textContent = "";
+    clearRawOutput();
     if (state.ready) await validate({ passive: true });
   } catch (error) {
     els.summary.textContent = `Could not load file: ${error.message}`;
@@ -382,7 +382,56 @@ function renderRunWorkerError(error) {
   els.summary.textContent = error?.message || "Run failed";
   els.summary.classList.remove("good");
   els.summary.classList.add("bad");
-  els.raw.textContent = String(error?.stack || error?.message || error);
+  renderRawText(String(error?.stack || error?.message || error));
+}
+
+function renderRawOutput(value) {
+  els.raw.className = "raw-output raw-json";
+  els.raw.innerHTML = renderJsonNode(value, "response", 0);
+}
+
+function renderRawText(value) {
+  els.raw.className = "raw-output raw-text";
+  els.raw.textContent = value;
+}
+
+function clearRawOutput() {
+  els.raw.className = "raw-output";
+  els.raw.textContent = "";
+}
+
+function renderJsonNode(value, label, depth) {
+  if (!isJsonBranch(value)) {
+    return `<div class="json-row">${jsonLabel(label)}${jsonScalar(value)}</div>`;
+  }
+
+  const isArray = Array.isArray(value);
+  const entries = isArray ? value.map((item, index) => [`[${index}]`, item]) : Object.entries(value);
+  const type = isArray ? "array" : "object";
+  const unit = isArray ? (entries.length === 1 ? "item" : "items") : (entries.length === 1 ? "field" : "fields");
+  const open = depth === 0 ? " open" : "";
+  return `<details class="json-node"${open}>
+    <summary>${jsonLabel(label)}<span class="json-type">${type} · ${entries.length} ${unit}</span></summary>
+    <div class="json-children">
+      ${entries.length ? entries.map(([key, item]) => renderJsonNode(item, key, depth + 1)).join("") : `<span class="json-empty">empty</span>`}
+    </div>
+  </details>`;
+}
+
+function isJsonBranch(value) {
+  return value !== null && typeof value === "object";
+}
+
+function jsonLabel(label) {
+  return `<span class="json-key">${escapeHtml(label)}</span>`;
+}
+
+function jsonScalar(value) {
+  if (value === null) return `<span class="json-scalar json-null">null</span>`;
+  if (typeof value === "string") return `<span class="json-scalar json-string">${escapeHtml(JSON.stringify(value))}</span>`;
+  if (typeof value === "number") return `<span class="json-scalar json-number">${String(value)}</span>`;
+  if (typeof value === "boolean") return `<span class="json-scalar json-boolean">${String(value)}</span>`;
+  return `<span class="json-scalar">${escapeHtml(String(value))}</span>`;
 }
 
 function renderSpans(spans) {
