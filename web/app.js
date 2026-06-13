@@ -73,6 +73,11 @@ const state = {
   lastRun: null,
   currentTopology: null,
   errorTracesOnly: false,
+  editorRevision: 0,
+  runtimeBusy: false,
+  runBusy: false,
+  activeRunID: 0,
+  runner: null,
 };
 
 const emptyCopy = {
@@ -146,9 +151,10 @@ els.errorFilter.addEventListener("click", () => {
   renderSpans(state.lastRun?.spans ?? []);
 });
 els.editor.addEventListener("input", () => {
-  setValidateButton("Validate");
+  markEditorChanged();
 });
 
+syncControls();
 loadWasm();
 
 function initTheme() {
@@ -172,6 +178,7 @@ async function loadWasm() {
     state.ready = true;
     els.status.textContent = "Runtime ready";
     els.status.classList.add("ready");
+    syncControls();
     await validate({ passive: true });
   } catch (error) {
     els.status.textContent = "Build runtime first";
@@ -183,7 +190,7 @@ async function loadWasm() {
 async function validate({ passive = false } = {}) {
   if (!state.ready) return;
   let valid = false;
-  setBusy(true, "Validating", { resetValidate: false });
+  setRuntimeBusy(true, "Validating", { resetValidate: false });
   if (!passive) {
     setValidateButton("Validating");
   }
@@ -195,7 +202,7 @@ async function validate({ passive = false } = {}) {
     }
     els.raw.textContent = JSON.stringify(result, null, 2);
   } finally {
-    setBusy(false, "Runtime ready");
+    setRuntimeBusy(false);
     if (!passive) {
       setValidateButton(valid ? "Validated" : "Invalid", valid ? "validated" : "invalid");
     }
@@ -203,18 +210,28 @@ async function validate({ passive = false } = {}) {
 }
 
 async function run() {
-  if (!state.ready) return;
-  setBusy(true, "Running");
+  if (!state.ready || state.runBusy) return;
+  const runID = state.activeRunID + 1;
+  const editorRevision = state.editorRevision;
+  state.activeRunID = runID;
+  setRunBusy(true, "Running topology in background");
+  setValidateButton("Validate");
   try {
-    const result = JSON.parse(await window.motelRun(
-      els.editor.value,
-      Number(els.duration.value),
-      Number(els.seed.value),
-    ));
+    const result = JSON.parse(await runClient().run({
+      topology: els.editor.value,
+      duration: Number(els.duration.value),
+      seed: Number(els.seed.value),
+    }));
+    if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
     renderRun(result);
     els.raw.textContent = JSON.stringify(result, null, 2);
+  } catch (error) {
+    if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
+    renderRunWorkerError(error);
   } finally {
-    setBusy(false, "Runtime ready");
+    if (state.activeRunID === runID) {
+      setRunBusy(false);
+    }
   }
 }
 
@@ -223,7 +240,7 @@ async function generateTopology() {
   const seed = nextRandomSeed(currentSeed);
   const topology = randomTopologyYaml(seed, { maxNodes: maxRandomNodes() });
   els.seed.value = String(seed);
-  els.editor.value = topology;
+  replaceEditorValue(topology);
   els.summary.classList.remove("bad");
   els.summary.textContent = "Generated topology";
   clearRunOutput(emptyCopy.spans);
@@ -256,7 +273,7 @@ async function loadTopologyFile() {
   const [file] = els.file.files ?? [];
   if (!file) return;
   try {
-    els.editor.value = await file.text();
+    replaceEditorValue(await file.text());
     els.summary.classList.remove("bad", "good");
     els.summary.textContent = `Loaded ${file.name}`;
     clearRunOutput(emptyCopy.spans);
@@ -341,6 +358,18 @@ function renderRun(result) {
   }
   renderSpans(result.spans ?? []);
   renderMap(result.topology, result.spans ?? []);
+}
+
+function renderRunWorkerError(error) {
+  state.lastRun = null;
+  state.currentTopology = null;
+  clearPreview("Fix the run error to preview traffic.");
+  clearRunOutput(emptyCopy.runFailedSpans);
+  clearMap("Fix the run error to render the service map.");
+  els.summary.textContent = error?.message || "Run failed";
+  els.summary.classList.remove("good");
+  els.summary.classList.add("bad");
+  els.raw.textContent = String(error?.stack || error?.message || error);
 }
 
 function renderSpans(spans) {
@@ -558,6 +587,16 @@ function setValidateButton(label, stateClass) {
   if (stateClass) els.validate.classList.add(stateClass);
 }
 
+function replaceEditorValue(value) {
+  els.editor.value = value;
+  markEditorChanged();
+}
+
+function markEditorChanged() {
+  state.editorRevision += 1;
+  setValidateButton("Validate");
+}
+
 function syncSpanFilter(errorTraceCount, totalTraceCount) {
   els.errorFilter.disabled = totalTraceCount === 0;
   els.errorFilter.setAttribute("aria-pressed", String(state.errorTracesOnly));
@@ -568,15 +607,102 @@ function syncSpanFilter(errorTraceCount, totalTraceCount) {
     : "0 traces";
 }
 
-function setBusy(isBusy, label, { resetValidate = true } = {}) {
-  els.status.textContent = label;
-  els.load.disabled = isBusy;
-  els.save.disabled = isBusy;
-  els.generate.disabled = isBusy;
-  els.validate.disabled = isBusy;
-  els.run.disabled = isBusy;
+function setRuntimeBusy(isBusy, label, { resetValidate = true } = {}) {
+  state.runtimeBusy = isBusy;
   if (isBusy && resetValidate) {
     setValidateButton("Validate");
+  }
+  syncControls(label);
+}
+
+function setRunBusy(isBusy, label) {
+  state.runBusy = isBusy;
+  syncControls(label);
+}
+
+function syncControls(label) {
+  els.status.textContent = label || statusLabel();
+  els.load.disabled = state.runtimeBusy;
+  els.save.disabled = state.runtimeBusy;
+  els.generate.disabled = state.runtimeBusy;
+  els.validate.disabled = state.runtimeBusy || !state.ready;
+  els.run.disabled = state.runtimeBusy || state.runBusy || !state.ready;
+}
+
+function statusLabel() {
+  if (!state.ready) return "Runtime starting";
+  if (state.runtimeBusy) return els.status.textContent || "Working";
+  if (state.runBusy) return "Running topology in background";
+  return "Runtime ready";
+}
+
+function runClient() {
+  if (!window.Worker) {
+    return {
+      run: ({ topology, duration, seed }) => window.motelRun(topology, duration, seed),
+    };
+  }
+  if (!state.runner) {
+    state.runner = new RunWorkerClient(new URL("./run-worker.js", import.meta.url));
+  }
+  return state.runner;
+}
+
+class RunWorkerClient {
+  constructor(url) {
+    this.url = url;
+    this.nextID = 1;
+    this.pending = new Map();
+    this.worker = null;
+  }
+
+  run(payload) {
+    const id = this.nextID++;
+    const worker = this.ensureWorker();
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      worker.postMessage({ ...payload, id, type: "run" });
+    });
+  }
+
+  ensureWorker() {
+    if (this.worker) return this.worker;
+    this.worker = new Worker(this.url, { name: "motel-run-worker" });
+    this.worker.addEventListener("message", (event) => this.handleMessage(event.data));
+    this.worker.addEventListener("error", (event) => {
+      this.rejectAll(new Error(event.message || "Run worker failed"));
+      this.terminate();
+    });
+    this.worker.addEventListener("messageerror", () => {
+      this.rejectAll(new Error("Run worker returned an unreadable message"));
+      this.terminate();
+    });
+    return this.worker;
+  }
+
+  handleMessage(message) {
+    const pending = this.pending.get(message?.id);
+    if (!pending) return;
+    this.pending.delete(message.id);
+    if (message.ok) {
+      pending.resolve(message.json);
+      return;
+    }
+    pending.reject(new Error(message.error?.message || "Run worker failed"));
+  }
+
+  rejectAll(error) {
+    for (const pending of this.pending.values()) {
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+
+  terminate() {
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
   }
 }
 

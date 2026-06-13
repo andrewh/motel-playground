@@ -150,8 +150,18 @@ try {
   if (durationControl.value !== "1" || durationControl.min !== "0.1" || durationControl.step !== "0.1") {
     throw new Error(`duration control does not default to one-second fractional input: ${JSON.stringify(durationControl)}`);
   }
-  await evaluate(client, `document.querySelector("#duration").value = "0.5"`);
+  await evaluate(client, `document.querySelector("#duration").value = "1"`);
   await evaluate(client, `document.querySelector("#run-button").click()`);
+  const controlsDuringRun = await waitFor(async () => {
+    const state = await evaluate(client, `(${runControlState})()`);
+    return state.runDisabled ? state : false;
+  }, "background run controls");
+  if (controlsDuringRun.loadDisabled || controlsDuringRun.saveDisabled || controlsDuringRun.generateDisabled || controlsDuringRun.validateDisabled) {
+    throw new Error(`background run disabled unrelated controls: ${JSON.stringify(controlsDuringRun)}`);
+  }
+  if (!controlsDuringRun.status.includes("background")) {
+    throw new Error(`background run status did not describe worker execution: ${JSON.stringify(controlsDuringRun)}`);
+  }
   await waitFor(async () => Number(await evaluate(client, `document.querySelector("#metric-spans").textContent`)) > 0, "spans captured");
 
   await setEditorValue(client, erroredTopology);
@@ -378,6 +388,17 @@ function traceFilterState() {
     active: document.querySelector("#error-filter").getAttribute("aria-pressed") === "true",
     disabled: document.querySelector("#error-filter").disabled,
     count: document.querySelector("#span-filter-count").textContent,
+  };
+}
+
+function runControlState() {
+  return {
+    status: document.querySelector("#runtime-status").textContent,
+    loadDisabled: document.querySelector("#load-button").disabled,
+    saveDisabled: document.querySelector("#save-button").disabled,
+    generateDisabled: document.querySelector("#generate-button").disabled,
+    validateDisabled: document.querySelector("#validate-button").disabled,
+    runDisabled: document.querySelector("#run-button").disabled,
   };
 }
 
