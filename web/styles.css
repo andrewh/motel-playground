@@ -121,7 +121,7 @@ button {
 @media (hover: hover) {
   button:hover {
     border-color: var(--line-strong);
-    background: color-mix(in oklch, var(--surface-raised), var(--accent-soft) 32%);
+    background: color-mix(in oklch, var(--surface-raised), var(--ink) 6%);
     transform: translateY(-1px);
   }
 }
@@ -256,7 +256,7 @@ h2 {
 @media (hover: hover) {
   .topnav a:hover {
     border-color: var(--line-strong);
-    background: color-mix(in oklch, var(--surface-raised), var(--accent-soft) 32%);
+    background: color-mix(in oklch, var(--surface-raised), var(--ink) 6%);
     color: var(--ink);
   }
 }
