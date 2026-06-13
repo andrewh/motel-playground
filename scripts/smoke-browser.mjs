@@ -10,6 +10,22 @@ import { setTimeout as delay } from "node:timers/promises";
 
 const webRoot = fileURLToPath(new URL("../web/", import.meta.url));
 const invalidTopology = "version: 1\nservices: [\n";
+const erroredTopology = `version: 1
+services:
+  gateway:
+    operations:
+      GET /error:
+        duration: 4ms +/- 1ms
+        error_rate: 100%
+        calls:
+          - worker.job
+  worker:
+    operations:
+      job:
+        duration: 2ms +/- 1ms
+traffic:
+  rate: 6/s
+`;
 
 class CDPClient {
   static connect(url) {
@@ -137,6 +153,26 @@ try {
   await evaluate(client, `document.querySelector("#duration").value = "0.5"`);
   await evaluate(client, `document.querySelector("#run-button").click()`);
   await waitFor(async () => Number(await evaluate(client, `document.querySelector("#metric-spans").textContent`)) > 0, "spans captured");
+
+  await setEditorValue(client, erroredTopology);
+  await evaluate(client, `document.querySelector("#validate-button").click()`);
+  await waitFor(async () => evaluate(client, `document.querySelector("#validate-button").classList.contains("validated")`), "error topology validated");
+  await evaluate(client, `document.querySelector("#duration").value = "1"`);
+  await evaluate(client, `document.querySelector("#run-button").click()`);
+  const unfilteredTraces = await waitFor(async () => {
+    const state = await evaluate(client, `(${traceFilterState})()`);
+    return state.errored > 0 ? state : false;
+  }, "errored traces captured");
+  await evaluate(client, `document.querySelector("[data-view='traces']").click()`);
+  await evaluate(client, `document.querySelector("#error-filter").click()`);
+  const filteredTraces = await waitFor(async () => {
+    const state = await evaluate(client, `(${traceFilterState})()`);
+    return state.active && state.total === unfilteredTraces.errored ? state : false;
+  }, "error trace filter applied");
+  if (filteredTraces.nonErrored !== 0) {
+    throw new Error(`error filter left non-error traces visible: ${JSON.stringify(filteredTraces)}`);
+  }
+  await evaluate(client, `document.querySelector("#error-filter").click()`);
 
   await setEditorValue(client, invalidTopology);
   await evaluate(client, `document.querySelector("#validate-button").click()`);
@@ -330,6 +366,19 @@ function mapRenderState() {
     }
     return false;
   }
+}
+
+function traceFilterState() {
+  const groups = Array.from(document.querySelectorAll("#traces .trace-group"));
+  const errored = groups.filter((group) => group.classList.contains("errored")).length;
+  return {
+    total: groups.length,
+    errored,
+    nonErrored: groups.length - errored,
+    active: document.querySelector("#error-filter").getAttribute("aria-pressed") === "true",
+    disabled: document.querySelector("#error-filter").disabled,
+    count: document.querySelector("#span-filter-count").textContent,
+  };
 }
 
 function invalidValidationState() {
