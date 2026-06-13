@@ -8,6 +8,16 @@ services:
     resource_attributes:
       deployment.environment: production
       service.namespace: demo
+    metrics:
+      - name: gateway.request.duration
+        type: histogram
+        unit: ms
+      - name: gateway.error.count
+        type: counter
+        errors_only: true
+    logs:
+      - severity: INFO
+        body: "gateway handled {operation.name}"
     operations:
       GET /users:
         duration: 30ms +/- 10ms
@@ -73,6 +83,7 @@ const state = {
   lastRun: null,
   currentTopology: null,
   errorTracesOnly: false,
+  warnLogsOnly: false,
   editorRevision: 0,
   runtimeBusy: false,
   runBusy: false,
@@ -84,6 +95,12 @@ const emptyCopy = {
   spans: "Run the topology to inspect spans.",
   invalidSpans: "Fix validation errors before running the topology.",
   runFailedSpans: "Run failed; no spans are available.",
+  metrics: "Run the topology to inspect metrics.",
+  logs: "Run the topology to inspect logs.",
+  invalidMetrics: "Fix validation errors before running the topology.",
+  invalidLogs: "Fix validation errors before running the topology.",
+  runFailedMetrics: "Run failed; no metrics are available.",
+  runFailedLogs: "Run failed; no logs are available.",
   map: "Open the map tab to render the service graph.",
   invalidMap: "Fix validation errors to render the service map.",
   invalidPreview: "Fix validation errors to preview traffic.",
@@ -106,6 +123,10 @@ const els = {
   traces: document.querySelector("#traces"),
   errorFilter: document.querySelector("#error-filter"),
   spanFilterCount: document.querySelector("#span-filter-count"),
+  signalMetrics: document.querySelector("#signal-metrics"),
+  signalLogs: document.querySelector("#signal-logs"),
+  logSeverityFilter: document.querySelector("#log-severity-filter"),
+  logFilterCount: document.querySelector("#log-filter-count"),
   map: document.querySelector("#service-map"),
   raw: document.querySelector("#raw-output"),
   summary: document.querySelector("#summary-line"),
@@ -118,6 +139,7 @@ const els = {
 
 els.editor.value = sampleTopology;
 clearMap(emptyCopy.map);
+clearSignalOutput();
 
 initTheme();
 
@@ -149,6 +171,10 @@ els.file.addEventListener("change", () => loadTopologyFile());
 els.errorFilter.addEventListener("click", () => {
   state.errorTracesOnly = !state.errorTracesOnly;
   renderSpans(state.lastRun?.spans ?? []);
+});
+els.logSeverityFilter.addEventListener("click", () => {
+  state.warnLogsOnly = !state.warnLogsOnly;
+  renderLogs(state.lastRun?.logs ?? []);
 });
 els.duration.addEventListener("input", () => {
   if (state.ready && state.currentTopology && !state.runtimeBusy) {
@@ -249,6 +275,7 @@ async function generateTopology() {
   els.summary.classList.remove("bad");
   els.summary.textContent = "Generated topology";
   clearRunOutput(emptyCopy.spans);
+  clearSignalOutput();
   els.raw.textContent = "";
   if (state.ready) await validate({ passive: true });
 }
@@ -282,6 +309,7 @@ async function loadTopologyFile() {
     els.summary.classList.remove("bad", "good");
     els.summary.textContent = `Loaded ${file.name}`;
     clearRunOutput(emptyCopy.spans);
+    clearSignalOutput();
     els.raw.textContent = "";
     if (state.ready) await validate({ passive: true });
   } catch (error) {
@@ -332,6 +360,7 @@ function renderValidation(result) {
     state.currentTopology = null;
     clearPreview(emptyCopy.invalidPreview);
     clearRunOutput(emptyCopy.invalidSpans);
+    clearSignalOutput(emptyCopy.invalidMetrics, emptyCopy.invalidLogs);
     clearMap(emptyCopy.invalidMap);
     els.summary.textContent = `Invalid topology: ${message}`;
     els.summary.classList.remove("good");
@@ -353,6 +382,7 @@ function renderRun(result) {
     state.currentTopology = null;
     clearPreview("Fix the run error to preview traffic.");
     clearRunOutput(emptyCopy.runFailedSpans);
+    clearSignalOutput(emptyCopy.runFailedMetrics, emptyCopy.runFailedLogs);
     clearMap("Fix the run error to render the service map.");
     els.summary.textContent = result.errors?.[0]?.message ?? "Run failed";
     els.summary.classList.remove("good");
@@ -370,6 +400,8 @@ function renderRun(result) {
     els.summary.textContent = `${stats.traces} traces, ${stats.spans} spans, ${stats.errors} errors (${capturedErrors} captured)`;
   }
   renderSpans(result.spans ?? []);
+  renderMetrics(result.metrics ?? []);
+  renderLogs(result.logs ?? []);
   renderMap(result.topology, result.spans ?? []);
 }
 
@@ -378,11 +410,106 @@ function renderRunWorkerError(error) {
   state.currentTopology = null;
   clearPreview("Fix the run error to preview traffic.");
   clearRunOutput(emptyCopy.runFailedSpans);
+  clearSignalOutput(emptyCopy.runFailedMetrics, emptyCopy.runFailedLogs);
   clearMap("Fix the run error to render the service map.");
   els.summary.textContent = error?.message || "Run failed";
   els.summary.classList.remove("good");
   els.summary.classList.add("bad");
   els.raw.textContent = String(error?.stack || error?.message || error);
+}
+
+function renderMetrics(metrics) {
+  const ordered = metrics.slice().sort(compareSignals);
+  if (ordered.length === 0) {
+    els.signalMetrics.innerHTML = `<p class="empty">No metrics captured yet.</p>`;
+    return;
+  }
+  els.signalMetrics.innerHTML = ordered.map((metric, index) => {
+    const panelID = `metric-panel-${index}`;
+    return `<article class="signal-item">
+      <button class="signal-row" type="button" aria-expanded="false" aria-controls="${panelID}">
+        <span class="signal-meta">
+          <strong>${escapeHtml(metric.name)}</strong>
+          <span>${escapeHtml(signalContext(metric))}</span>
+        </span>
+        <span class="signal-kind">${escapeHtml(metric.type || "metric")}</span>
+        <span class="signal-value">${escapeHtml(metricValue(metric))}</span>
+      </button>
+      <div class="signal-drawer" id="${panelID}" hidden>
+        ${renderMetricDetails(metric)}
+      </div>
+    </article>`;
+  }).join("");
+  bindSignalDrawers(els.signalMetrics);
+}
+
+function renderMetricDetails(metric) {
+  const timestamp = Number.isFinite(metric.timestamp_ms) && metric.timestamp_ms > 0
+    ? new Date(metric.timestamp_ms).toISOString()
+    : "collection time";
+  const attributes = Object.entries(metric.attributes ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return `<div class="span-facts">
+    ${spanFact("name", metric.name)}
+    ${spanFact("type", metric.type || "metric")}
+    ${spanFact("value", metricValue(metric))}
+    ${spanFact("service", metric.service || "unknown")}
+    ${spanFact("operation", metric.operation || "service")}
+    ${spanFact("timestamp", timestamp)}
+  </div>
+  ${attributes.length ? `<dl class="span-attributes">
+    ${attributes.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
+  </dl>` : `<p class="empty span-empty">No metric attributes.</p>`}`;
+}
+
+function renderLogs(logs) {
+  const ordered = logs.slice().sort(compareSignals);
+  const notableCount = ordered.filter((log) => isNotableLog(log)).length;
+  const visible = state.warnLogsOnly ? ordered.filter((log) => isNotableLog(log)) : ordered;
+  syncLogFilter(notableCount, ordered.length);
+  if (ordered.length === 0) {
+    els.signalLogs.innerHTML = `<p class="empty">No logs captured yet.</p>`;
+    return;
+  }
+  if (visible.length === 0) {
+    els.signalLogs.innerHTML = `<p class="empty">No warn or error logs in this run.</p>`;
+    return;
+  }
+  els.signalLogs.innerHTML = visible.map((log, index) => {
+    const panelID = `log-panel-${index}`;
+    const severity = (log.severity || "info").toLowerCase();
+    return `<article class="signal-item log-${escapeHtml(severity)}">
+      <button class="signal-row" type="button" aria-expanded="false" aria-controls="${panelID}">
+        <span class="signal-meta">
+          <strong>${escapeHtml(log.body || "(empty log)")}</strong>
+          <span>${escapeHtml(signalContext(log))}</span>
+        </span>
+        <span class="signal-kind">${escapeHtml(log.severity || "INFO")}</span>
+        <time class="signal-value">${escapeHtml(signalTime(log.timestamp_ms))}</time>
+      </button>
+      <div class="signal-drawer" id="${panelID}" hidden>
+        ${renderLogDetails(log)}
+      </div>
+    </article>`;
+  }).join("");
+  bindSignalDrawers(els.signalLogs);
+}
+
+function renderLogDetails(log) {
+  const timestamp = Number.isFinite(log.timestamp_ms) && log.timestamp_ms > 0
+    ? new Date(log.timestamp_ms).toISOString()
+    : "unknown";
+  const attributes = Object.entries(log.attributes ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return `<div class="span-facts">
+    ${spanFact("severity", log.severity || "INFO")}
+    ${spanFact("service", log.service || "unknown")}
+    ${spanFact("operation", log.operation || "service")}
+    ${spanFact("timestamp", timestamp)}
+    ${spanFact("trace", log.trace_id || "none")}
+    ${spanFact("span", log.span_id || "none")}
+  </div>
+  ${attributes.length ? `<dl class="span-attributes">
+    ${attributes.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
+  </dl>` : `<p class="empty span-empty">No log attributes.</p>`}`;
 }
 
 function renderSpans(spans) {
@@ -574,11 +701,20 @@ function renderMap(topology, spans) {
 function clearRunOutput(message) {
   state.lastRun = null;
   state.errorTracesOnly = false;
+  state.warnLogsOnly = false;
   syncSpanFilter(0, 0);
+  syncLogFilter(0, 0);
   els.metrics.traces.textContent = "0";
   els.metrics.spans.textContent = "0";
   els.metrics.errors.textContent = "0%";
   els.traces.innerHTML = `<p class="empty">${escapeHtml(message)}</p>`;
+}
+
+function clearSignalOutput(metricMessage = emptyCopy.metrics, logMessage = emptyCopy.logs) {
+  state.warnLogsOnly = false;
+  syncLogFilter(0, 0);
+  els.signalMetrics.innerHTML = `<p class="empty">${escapeHtml(metricMessage)}</p>`;
+  els.signalLogs.innerHTML = `<p class="empty">${escapeHtml(logMessage)}</p>`;
 }
 
 function clearPreview(message) {
@@ -618,6 +754,62 @@ function syncSpanFilter(errorTraceCount, totalTraceCount) {
   els.spanFilterCount.textContent = totalTraceCount
     ? `${errorTraceCount} of ${totalTraceCount} traces with errors`
     : "0 traces";
+}
+
+function syncLogFilter(notableCount, totalCount) {
+  els.logSeverityFilter.disabled = totalCount === 0;
+  els.logSeverityFilter.setAttribute("aria-pressed", String(state.warnLogsOnly));
+  els.logSeverityFilter.classList.toggle("active", state.warnLogsOnly);
+  els.logSeverityFilter.textContent = state.warnLogsOnly ? "Showing warn/error" : "Warn and error";
+  els.logFilterCount.textContent = totalCount
+    ? `${notableCount} of ${totalCount} logs warn/error`
+    : "0 logs";
+}
+
+function bindSignalDrawers(root) {
+  for (const row of root.querySelectorAll(".signal-row")) {
+    row.addEventListener("click", () => {
+      const drawer = document.getElementById(row.getAttribute("aria-controls"));
+      const expanded = row.getAttribute("aria-expanded") === "true";
+      row.setAttribute("aria-expanded", String(!expanded));
+      drawer.hidden = expanded;
+    });
+  }
+}
+
+function metricValue(metric) {
+  if (metric.count) {
+    const suffix = metric.unit ? ` ${metric.unit}` : "";
+    return `${metric.count} samples, sum ${formatNumber(metric.sum)}${suffix}`;
+  }
+  const suffix = metric.unit ? ` ${metric.unit}` : "";
+  return `${formatNumber(metric.value)}${suffix}`;
+}
+
+function signalContext(signal) {
+  const service = signal.service || "unknown";
+  return signal.operation ? `${service}.${signal.operation}` : service;
+}
+
+function signalTime(timestampMs) {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) return "";
+  return new Date(timestampMs).toISOString().slice(11, 23);
+}
+
+function compareSignals(a, b) {
+  const timestampDelta = (a.timestamp_ms ?? 0) - (b.timestamp_ms ?? 0);
+  if (timestampDelta !== 0) return timestampDelta;
+  return `${a.service || ""}.${a.name || a.body || ""}`.localeCompare(`${b.service || ""}.${b.name || b.body || ""}`);
+}
+
+function isNotableLog(log) {
+  const severity = String(log.severity || "").toLowerCase();
+  return severity.includes("warn") || severity.includes("error") || severity.includes("fatal");
+}
+
+function formatNumber(value) {
+  if (!Number.isFinite(Number(value))) return "0";
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(Number(value));
 }
 
 function setRuntimeBusy(isBusy, label, { resetValidate = true } = {}) {

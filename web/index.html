@@ -76,6 +76,8 @@
           <div class="tabs" role="tablist" aria-label="Result views">
             <button class="tab active" data-view="preview" type="button">Traffic</button>
             <button class="tab" data-view="traces" type="button">Spans</button>
+            <button class="tab" data-view="metrics" type="button">Metrics</button>
+            <button class="tab" data-view="logs" type="button">Logs</button>
             <button class="tab" data-view="map" type="button">Map</button>
             <button class="tab" data-view="raw" type="button">Raw</button>
           </div>
@@ -89,6 +91,16 @@
               <span id="span-filter-count">0 traces</span>
             </div>
             <div id="traces" class="span-list"></div>
+          </section>
+          <section class="view" id="view-metrics" aria-label="Metric signals">
+            <div id="signal-metrics" class="signal-list"></div>
+          </section>
+          <section class="view" id="view-logs" aria-label="Log signals">
+            <div class="span-toolbar">
+              <button id="log-severity-filter" class="filter-toggle" type="button" aria-pressed="false" disabled>Warn and error</button>
+              <span id="log-filter-count">0 logs</span>
+            </div>
+            <div id="signal-logs" class="signal-list"></div>
           </section>
           <section class="view" id="view-map" aria-label="Service map">
             <div id="service-map" class="service-map"></div>

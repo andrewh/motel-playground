@@ -493,7 +493,7 @@ input {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   border-bottom: 1px solid var(--line);
   background: var(--surface-raised);
 }
@@ -552,6 +552,11 @@ input {
 }
 
 .span-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.signal-list {
   display: grid;
   gap: var(--space-2);
 }
@@ -687,7 +692,45 @@ input {
   content: "-";
 }
 
+.signal-item {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.signal-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(72px, 0.18fr) minmax(112px, 0.24fr) 24px;
+  gap: var(--space-3);
+  align-items: center;
+  width: 100%;
+  min-height: 52px;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface-raised);
+  color: var(--ink);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+.signal-row::after {
+  content: "+";
+  grid-column: 4;
+  justify-self: end;
+  color: var(--muted);
+  font-weight: 560;
+}
+
+.signal-row[aria-expanded="true"]::after {
+  content: "-";
+}
+
 .span-meta {
+  min-width: 0;
+}
+
+.signal-meta {
   min-width: 0;
 }
 
@@ -699,12 +742,27 @@ input {
   white-space: nowrap;
 }
 
+.signal-meta strong,
+.signal-meta span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .span-meta strong {
   font-size: 0.91rem;
 }
 
+.signal-meta strong {
+  font-size: 0.9rem;
+}
+
 .span-meta span,
 .span-row time,
+.signal-meta span,
+.signal-kind,
+.signal-value,
 .service-node small,
 .service-node span,
 .empty {
@@ -717,9 +775,37 @@ input {
   font-variant-numeric: tabular-nums;
 }
 
+.signal-kind {
+  justify-self: start;
+  font-weight: 680;
+  text-transform: uppercase;
+}
+
+.signal-value {
+  justify-self: end;
+  overflow: hidden;
+  max-width: 100%;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-drawer {
+  padding: var(--space-3);
+  animation: reveal 180ms var(--ease-out);
+}
+
+.log-warn .signal-kind,
+.log-error .signal-kind,
+.log-fatal .signal-kind {
+  color: var(--danger);
+}
+
 @media (hover: hover) {
   .trace-row:hover,
-  .span-row:hover {
+  .span-row:hover,
+  .signal-row:hover {
     background: color-mix(in oklch, var(--surface-raised), var(--surface) 55%);
     transform: none;
   }
@@ -973,14 +1059,26 @@ pre {
     grid-template-columns: 1fr;
   }
 
+  .signal-row {
+    grid-template-columns: minmax(0, 1fr) minmax(70px, auto) 24px;
+  }
+
   .span-row::after {
     grid-column: 1;
     justify-self: end;
     grid-row: 1;
   }
 
+  .signal-row::after {
+    grid-column: 3;
+  }
+
   .span-row time {
     justify-self: start;
+  }
+
+  .signal-value {
+    display: none;
   }
 
   .span-attributes div {
