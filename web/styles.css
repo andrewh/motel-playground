@@ -477,6 +477,18 @@ kbd {
   font-size: 0.85rem;
 }
 
+.share-status:empty {
+  display: none;
+}
+
+.share-status.good {
+  color: var(--ready-ink);
+}
+
+.share-status.bad {
+  color: var(--danger);
+}
+
 .pane-head p.good {
   color: var(--ready-ink);
 }

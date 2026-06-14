@@ -9,7 +9,10 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 const webRoot = fileURLToPath(new URL("../web/", import.meta.url));
+const pagesBasePath = "/motel-playground/";
+const oversizedTopologyPaddingLength = 9000;
 const invalidTopology = "version: 1\nservices: [\n";
+const oversizedTopology = `version: 1\n# ${"x".repeat(oversizedTopologyPaddingLength)}\nservices: {}\n`;
 const erroredTopology = `version: 1
 services:
   gateway:
@@ -77,6 +80,7 @@ const server = await startStaticServer();
 const debugPort = await freePort();
 const userDataDir = mkdtempSync(path.join(tmpdir(), "motel-browser-smoke-"));
 const appURL = `http://127.0.0.1:${server.port}/`;
+const pagesAppURL = new URL("motel-playground/", appURL).href;
 
 const chrome = spawn(chromePath, [
   "--headless=new",
@@ -214,7 +218,79 @@ try {
   ) {
     throw new Error(`duration control does not default to one-second fractional input: ${JSON.stringify(durationControl)}`);
   }
+  await evaluate(client, `(() => {
+    window.__lastShareCopy = "";
+    try {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async (text) => {
+            window.__lastShareCopy = text;
+          },
+        },
+      });
+    } catch {
+    }
+  })()`);
+  await evaluate(client, `document.querySelector("#duration").value = "2.5"`);
+  await evaluate(client, `document.querySelector("#seed").value = "314"`);
+  await evaluate(client, `document.querySelector("#max-nodes").value = "4"`);
+  await setResultFilter(client, "gateway");
+  await evaluate(client, `document.querySelector("[data-view='logs']").click()`);
+  await evaluate(client, `document.querySelector("#share-button").click()`);
+  const copiedShare = await waitFor(async () => {
+    const state = await evaluate(client, `(${shareCopyState})()`);
+    return state.hasHash && state.readyStatus ? state : false;
+  }, "share link copied");
+  const shareHash = new URL(copiedShare.href).hash;
+  if (!shareHash.startsWith("#state=")) {
+    throw new Error(`share link did not use the state hash: ${JSON.stringify(copiedShare)}`);
+  }
+
+  await client.send("Page.navigate", { url: `${pagesAppURL}${shareHash}` });
+  const restoredShare = await waitFor(async () => {
+    const state = await evaluate(client, `(${shareRestoreState})()`);
+    return state.ready
+      && state.preview
+      && state.topology === sampleTopology
+      && state.duration === "2.5"
+      && state.seed === "314"
+      && state.maxNodes === "4"
+      && state.filter === "gateway"
+      && state.activeView === "logs"
+      ? state
+      : false;
+  }, "share link restored under Pages path");
+  if (!restoredShare.path.endsWith(pagesBasePath)) {
+    throw new Error(`share link did not preserve Pages path: ${JSON.stringify(restoredShare)}`);
+  }
+
+  await client.send("Page.navigate", { url: `${appURL}#state=not-valid` });
+  const invalidShare = await waitFor(async () => {
+    const state = await evaluate(client, `(${invalidShareState})()`);
+    return state.ready && state.recoverable ? state : false;
+  }, "invalid share link handled");
+  if (!invalidShare.defaultTopology || invalidShare.runDisabled) {
+    throw new Error(`invalid share link did not leave the playground usable: ${JSON.stringify(invalidShare)}`);
+  }
+
+  await setEditorValue(client, oversizedTopology);
+  await evaluate(client, `document.querySelector("#share-button").click()`);
+  const oversizedShare = await waitFor(async () => {
+    const state = await evaluate(client, `(${oversizedShareState})()`);
+    return state.tooLarge ? state : false;
+  }, "oversized share link handled");
+  if (!oversizedShare.status.includes("save YAML")) {
+    throw new Error(`oversized share guidance was not clear: ${JSON.stringify(oversizedShare)}`);
+  }
+
+  await setEditorValue(client, sampleTopology);
+  await setResultFilter(client, "");
+  await evaluate(client, `document.querySelector("[data-view='preview']").click()`);
   await evaluate(client, `document.querySelector("#duration").value = "1"`);
+  await evaluate(client, `document.querySelector("#seed").value = "42"`);
+  await evaluate(client, `document.querySelector("#validate-button").click()`);
+  await waitFor(async () => evaluate(client, `document.querySelector("#validate-button").classList.contains("validated")`), "sample revalidated after share checks");
   await evaluate(client, `document.querySelector("#run-button").click()`);
   const controlsDuringRun = await waitFor(async () => {
     const state = await evaluate(client, `(${runControlState})()`);
@@ -393,7 +469,7 @@ function startStaticServer() {
   const httpServer = createServer(async (request, response) => {
     try {
       const url = new URL(request.url || "/", "http://127.0.0.1");
-      const pathname = url.pathname === "/" ? "/index.html" : decodeURIComponent(url.pathname);
+      const pathname = resolveStaticPathname(decodeURIComponent(url.pathname));
       const filePath = path.resolve(webRoot, `.${pathname}`);
       if (!filePath.startsWith(webRoot)) {
         response.writeHead(403);
@@ -419,6 +495,14 @@ function startStaticServer() {
       });
     });
   });
+}
+
+function resolveStaticPathname(pathname) {
+  if (pathname === "/" || pathname === pagesBasePath) return "/index.html";
+  if (pathname.startsWith(pagesBasePath)) {
+    return `/${pathname.slice(pagesBasePath.length)}`;
+  }
+  return pathname;
 }
 
 function freePort() {
@@ -554,6 +638,49 @@ function shortcutHelpState() {
     focusedDialog: document.activeElement === document.querySelector(".shortcut-modal"),
     focusedHelpButton: document.activeElement === document.querySelector("#shortcut-help-button"),
     text: help.textContent,
+  };
+}
+
+function shareCopyState() {
+  const status = document.querySelector("#share-status").textContent;
+  const href = window.__lastShareCopy || window.location.href;
+  return {
+    href,
+    status,
+    hasHash: new URL(href).hash.startsWith("#state="),
+    readyStatus: status.includes("copied") || status.includes("address bar"),
+  };
+}
+
+function shareRestoreState() {
+  return {
+    ready: document.querySelector("#runtime-status")?.textContent === "Runtime ready",
+    preview: Boolean(document.querySelector("#preview svg")),
+    topology: window.motelPlayground?.getTopology(),
+    duration: document.querySelector("#duration").value,
+    seed: document.querySelector("#seed").value,
+    maxNodes: document.querySelector("#max-nodes").value,
+    filter: document.querySelector("#result-filter").value,
+    activeView: document.querySelector(".tab.active")?.dataset.view,
+    path: window.location.pathname,
+    status: document.querySelector("#share-status").textContent,
+  };
+}
+
+function invalidShareState() {
+  return {
+    ready: document.querySelector("#runtime-status")?.textContent === "Runtime ready",
+    recoverable: document.querySelector("#share-status").textContent.includes("could not be opened"),
+    defaultTopology: window.motelPlayground?.getTopology().includes("Five-service topology"),
+    runDisabled: document.querySelector("#run-button").disabled,
+  };
+}
+
+function oversizedShareState() {
+  const status = document.querySelector("#share-status").textContent;
+  return {
+    status,
+    tooLarge: status.includes("too large"),
   };
 }
 

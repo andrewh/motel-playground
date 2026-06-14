@@ -1,4 +1,10 @@
 import { randomTopologyYaml } from "./topology-generator.mjs";
+import {
+  decodeSharePayload,
+  getShareToken,
+  isShareURLTooLarge,
+  makeShareURL,
+} from "./share-state.mjs";
 
 const sampleTopology = `# Five-service topology demonstrating motel capabilities
 version: 1
@@ -124,6 +130,7 @@ const els = {
   file: document.querySelector("#topology-file"),
   load: document.querySelector("#load-button"),
   save: document.querySelector("#save-button"),
+  share: document.querySelector("#share-button"),
   generate: document.querySelector("#generate-button"),
   validate: document.querySelector("#validate-button"),
   run: document.querySelector("#run-button"),
@@ -142,6 +149,7 @@ const els = {
   map: document.querySelector("#service-map"),
   raw: document.querySelector("#raw-output"),
   summary: document.querySelector("#summary-line"),
+  shareStatus: document.querySelector("#share-status"),
   metrics: {
     traces: document.querySelector("#metric-traces"),
     spans: document.querySelector("#metric-spans"),
@@ -150,6 +158,7 @@ const els = {
 };
 
 const resultTabs = Array.from(document.querySelectorAll(".tab"));
+const resultViewNames = new Set(resultTabs.map((tab) => tab.dataset.view));
 const editors = {
   topology: null,
   raw: null,
@@ -191,6 +200,9 @@ els.run.addEventListener("click", () => run());
 els.generate.addEventListener("click", () => generateTopology());
 els.load.addEventListener("click", () => els.file.click());
 els.save.addEventListener("click", () => saveTopology());
+els.share.addEventListener("click", () => {
+  void copyShareURL();
+});
 els.file.addEventListener("change", () => loadTopologyFile());
 els.errorFilter.addEventListener("click", () => {
   state.errorTracesOnly = !state.errorTracesOnly;
@@ -216,7 +228,11 @@ els.editor.addEventListener("input", () => {
   }
   markEditorChanged();
 });
+window.addEventListener("hashchange", () => {
+  void restoreShareStateFromURL();
+});
 
+void restoreShareStateFromURL();
 syncControls();
 loadWasm();
 
@@ -369,7 +385,125 @@ function initEditors() {
   window.motelPlayground = {
     getTopology: () => getTopologyValue(),
     setTopology: (value) => setTopologyValue(value),
+    getShareURL: () => buildShareURL().href,
+    restoreShareState: () => restoreShareStateFromURL(),
   };
+}
+
+async function copyShareURL() {
+  const url = buildShareURL();
+  if (isShareURLTooLarge(url)) {
+    setShareStatus("Share link is too large; save YAML instead.", "bad");
+    return;
+  }
+  window.history.replaceState(null, "", url.href);
+  const copied = await writeClipboard(url.href);
+  setShareStatus(copied ? "Share link copied" : "Share link ready in address bar", "good");
+}
+
+function buildShareURL() {
+  return makeShareURL(window.location.href, {
+    topology: getTopologyValue(),
+    settings: {
+      duration: els.duration.value,
+      seed: els.seed.value,
+      maxNodes: els.maxNodes.value,
+    },
+    filters: {
+      result: els.resultFilter.value,
+      errorTracesOnly: state.errorTracesOnly,
+      warnLogsOnly: state.warnLogsOnly,
+    },
+    view: activeResultView(),
+  });
+}
+
+async function restoreShareStateFromURL() {
+  const token = getShareToken(window.location.hash);
+  if (!token) return false;
+  let payload;
+  try {
+    payload = decodeSharePayload(token, { allowedViews: resultViewNames });
+  } catch {
+    setShareStatus("Shared link could not be opened; playground left unchanged.", "bad");
+    return false;
+  }
+  applySharePayload(payload);
+  setShareStatus("Shared link opened", "good");
+  if (state.ready) {
+    await validate({ passive: true });
+  }
+  return true;
+}
+
+function applySharePayload(payload) {
+  setTopologyValue(payload.topology);
+  clearPreview("Validate the topology to preview traffic.");
+  clearRunOutput(emptyCopy.spans);
+  clearSignalOutput();
+  clearRawOutput();
+  clearMap(emptyCopy.map);
+  applyNumberInput(els.duration, payload.settings?.duration);
+  applyNumberInput(els.seed, payload.settings?.seed);
+  applyNumberInput(els.maxNodes, payload.settings?.maxNodes);
+  els.resultFilter.value = typeof payload.filters?.result === "string" ? payload.filters.result : "";
+  state.resultFilter = els.resultFilter.value.trim().toLowerCase();
+  state.errorTracesOnly = Boolean(payload.filters?.errorTracesOnly);
+  state.warnLogsOnly = Boolean(payload.filters?.warnLogsOnly);
+  syncSpanFilter(0, 0);
+  syncLogFilter(0, 0);
+  setValidateButton("Validate");
+  activateResultView(payload.view);
+}
+
+function applyNumberInput(input, value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return;
+  const min = finiteInputBound(input.min, -Infinity);
+  const max = finiteInputBound(input.max, Infinity);
+  input.value = String(Math.min(max, Math.max(min, numericValue)));
+}
+
+function finiteInputBound(value, fallback) {
+  if (value === "") return fallback;
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : fallback;
+}
+
+function activateResultView(view) {
+  const tab = resultTabs.find((item) => item.dataset.view === view) ?? resultTabs[0];
+  activateTab(tab);
+}
+
+async function writeClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+    }
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.className = "sr-only";
+  document.body.append(textarea);
+  textarea.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+  }
+  textarea.remove();
+  return copied;
+}
+
+function setShareStatus(message, kind) {
+  els.shareStatus.textContent = message;
+  els.shareStatus.classList.remove("good", "bad");
+  if (kind) {
+    els.shareStatus.classList.add(kind);
+  }
 }
 
 function openShortcutHelp() {
