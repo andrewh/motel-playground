@@ -30,6 +30,24 @@ Generated artifacts are intentionally ignored:
 Vendored browser dependencies live under `web/vendor/`; p5.js is pinned at
 `1.11.3` with its license in `web/vendor/p5/LICENSE.txt`.
 
+## Sharing configurations
+
+Use **Copy link** in the playground to share the current topology
+configuration. The link stores the topology YAML, run settings, output filter,
+filter toggles, and active result view in the URL hash. Opening the link
+restores that configuration in the static app without a server or database.
+
+Shared links restore the configuration and display context, not previously
+generated run output. The recipient must validate or run the topology again in
+their browser. The link includes the run settings, including the seed, to make
+reruns reproducible where the engine behavior is deterministic, but it is not a
+snapshot of the exact spans, metrics, logs, or analysis from a prior run.
+
+Shared links are not private. The topology and settings are encoded into the
+URL itself, so treat the link as equivalent to sharing the YAML. Very large
+topologies may exceed practical browser or chat URL limits; use **Save** to
+share the YAML file instead.
+
 ## Development
 
 Build the WASM artifact:

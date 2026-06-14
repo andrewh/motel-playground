@@ -43,11 +43,13 @@
             <div>
               <h2>Topology YAML</h2>
               <p id="summary-line">Five-service demo topology</p>
+              <p id="share-status" class="share-status" role="status" aria-live="polite"></p>
             </div>
             <div class="actions">
               <input id="topology-file" class="file-input" type="file" accept=".yaml,.yml,text/yaml,text/x-yaml,application/x-yaml" />
               <button id="load-button" type="button" aria-keyshortcuts="Meta+O Control+O">Load</button>
               <button id="save-button" type="button" aria-keyshortcuts="Meta+S Control+S">Save</button>
+              <button id="share-button" type="button">Copy link</button>
               <label class="field-compact">
                 Max nodes
                 <input id="max-nodes" type="number" min="2" max="12" step="1" value="8" />
