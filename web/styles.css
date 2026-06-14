@@ -143,6 +143,7 @@ textarea:focus {
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
+.CodeMirror-focused,
 .skip-link:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
@@ -529,6 +530,93 @@ textarea {
   font: 0.83rem/1.58 var(--font-code);
   font-variant-ligatures: none;
   tab-size: 2;
+}
+
+.editor-pane .CodeMirror,
+.raw-output .CodeMirror {
+  height: 100%;
+  min-height: 620px;
+  border-radius: 0;
+  background: var(--code-bg);
+  color: var(--code-ink);
+  font: 0.83rem/1.58 var(--font-code);
+  font-variant-ligatures: none;
+}
+
+.raw-output .CodeMirror {
+  min-height: 100%;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.CodeMirror {
+  box-sizing: border-box;
+  caret-color: var(--code-ink);
+}
+
+.CodeMirror-lines {
+  padding: var(--space-5) 0 var(--space-5) var(--space-2);
+}
+
+.raw-output .CodeMirror-lines {
+  padding: var(--space-4) 0 var(--space-4) var(--space-2);
+}
+
+.CodeMirror pre.CodeMirror-line,
+.CodeMirror pre.CodeMirror-line-like {
+  padding: 0;
+}
+
+.raw-output .CodeMirror pre.CodeMirror-line,
+.raw-output .CodeMirror pre.CodeMirror-line-like {
+  padding: 0;
+}
+
+.CodeMirror-gutters {
+  left: 0 !important;
+  border-right: 1px solid color-mix(in oklch, var(--code-ink), transparent 82%);
+  background: color-mix(in oklch, var(--code-bg), var(--code-ink) 5%);
+}
+
+.CodeMirror-gutter-wrapper {
+  left: calc(-1 * var(--cm-gutter-width, 42px)) !important;
+}
+
+.CodeMirror-linenumber,
+.CodeMirror-gutter-elt,
+.CodeMirror-foldgutter {
+  box-sizing: content-box;
+  color: color-mix(in oklch, var(--code-ink), transparent 48%);
+}
+
+.CodeMirror-foldmarker {
+  color: var(--code-ink);
+  text-shadow: none;
+  font-family: var(--font-code);
+}
+
+.CodeMirror-cursor {
+  border-left-color: var(--code-ink);
+}
+
+.cm-s-default .cm-atom,
+.cm-s-default .cm-number,
+.cm-s-default .cm-builtin {
+  color: color-mix(in oklch, var(--code-ink), var(--accent) 30%);
+}
+
+.cm-s-default .cm-string {
+  color: color-mix(in oklch, var(--code-ink), var(--ready) 26%);
+}
+
+.cm-s-default .cm-property,
+.cm-s-default .cm-keyword {
+  color: color-mix(in oklch, var(--code-ink), transparent 6%);
+}
+
+.cm-s-default .cm-comment {
+  color: color-mix(in oklch, var(--code-ink), transparent 42%);
 }
 
 .results-pane {
@@ -1076,6 +1164,33 @@ pre {
   font-variant-ligatures: none;
 }
 
+.raw-output {
+  min-height: 100%;
+  border-radius: var(--radius-sm);
+  overflow: auto;
+  color: var(--code-ink);
+  background: var(--code-bg);
+  padding: var(--space-4);
+  font: 0.78rem/1.55 var(--font-code);
+  font-variant-ligatures: none;
+}
+
+.raw-output pre {
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 @keyframes reveal {
   from {
     opacity: 0;
@@ -1112,6 +1227,7 @@ pre {
   }
 
   textarea,
+  .editor-pane .CodeMirror,
   .results-pane {
     min-height: 520px;
   }
