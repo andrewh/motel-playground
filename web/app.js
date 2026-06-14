@@ -83,8 +83,8 @@ traffic:
 
 scenarios:
   - name: database degradation
-    at: +15s
-    duration: 25s
+    at: +200ms
+    duration: 600ms
     override:
       postgres.query:
         duration: 500ms +/- 100ms
@@ -92,6 +92,9 @@ scenarios:
 `;
 
 const p5ScriptPath = "./vendor/p5/p5.min.js";
+const firstResultTabIndex = 0;
+const nextResultTabOffset = 1;
+const previousResultTabOffset = -1;
 const reportHashLength = 12;
 const reportMapCellHeight = 116;
 const reportMapCellWidth = 190;
@@ -199,6 +202,7 @@ for (const tab of resultTabs) {
   tab.addEventListener("click", () => {
     activateTab(tab);
   });
+  tab.addEventListener("keydown", (event) => handleResultTabKeydown(event, tab));
 }
 
 els.theme.addEventListener("click", () => {
@@ -206,6 +210,7 @@ els.theme.addEventListener("click", () => {
   setTheme(next);
   localStorage.setItem("motel-playground-theme", next);
   if (state.currentTopology) renderMap(state.currentTopology, state.lastRun?.spans ?? []);
+  if (state.currentTopology) void renderPreview();
 });
 
 els.shortcutHelpButton.addEventListener("click", () => openShortcutHelp());
@@ -247,7 +252,7 @@ els.resultFilter.addEventListener("input", () => {
 });
 els.duration.addEventListener("input", () => {
   if (state.ready && state.currentTopology && !state.runtimeBusy) {
-    renderPreview();
+    void renderPreview();
   }
 });
 els.editor.addEventListener("input", () => {
@@ -271,10 +276,17 @@ syncControls();
 loadWasm();
 
 function activateTab(tab) {
-  resultTabs.forEach((item) => item.classList.remove("active"));
-  document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
-  tab.classList.add("active");
-  document.querySelector(`#view-${tab.dataset.view}`).classList.add("active");
+  for (const item of resultTabs) {
+    const selected = item === tab;
+    const panel = document.querySelector(`#view-${item.dataset.view}`);
+    item.classList.toggle("active", selected);
+    item.setAttribute("aria-selected", String(selected));
+    item.tabIndex = selected ? 0 : -1;
+    if (panel) {
+      panel.classList.toggle("active", selected);
+      panel.hidden = !selected;
+    }
+  }
   if (tab.dataset.view === "map" && state.currentTopology) {
     renderMap(state.currentTopology, state.lastRun?.spans ?? []);
   }
@@ -283,6 +295,25 @@ function activateTab(tab) {
     editors.raw?.refresh();
     if (editors.raw) syncCodeMirrorGutter(editors.raw);
   }
+}
+
+function handleResultTabKeydown(event, tab) {
+  let nextIndex;
+  if (event.key === "Home") {
+    nextIndex = firstResultTabIndex;
+  } else if (event.key === "End") {
+    nextIndex = resultTabs.length - nextResultTabOffset;
+  } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+    nextIndex = (resultTabs.indexOf(tab) + previousResultTabOffset + resultTabs.length) % resultTabs.length;
+  } else if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+    nextIndex = (resultTabs.indexOf(tab) + nextResultTabOffset) % resultTabs.length;
+  } else {
+    return;
+  }
+  event.preventDefault();
+  const nextTab = resultTabs[nextIndex];
+  activateTab(nextTab);
+  nextTab.focus({ preventScroll: true });
 }
 
 function handleGlobalShortcut(event) {
@@ -622,7 +653,7 @@ async function validate({ passive = false } = {}) {
     const result = JSON.parse(await window.motelValidate(getTopologyValue()));
     valid = renderValidation(result);
     if (valid) {
-      await renderPreview();
+      valid = await renderPreview();
     }
     renderRawJson(result);
   } finally {
@@ -1026,8 +1057,15 @@ function formatSVGNumber(value) {
 }
 
 async function renderPreview() {
-  const svg = await window.motelPreview(getTopologyValue(), previewDurationSeconds());
-  els.preview.innerHTML = svg;
+  try {
+    const svg = await window.motelPreview(getTopologyValue(), previewDurationSeconds());
+    els.preview.innerHTML = svg;
+    return true;
+  } catch {
+    state.currentTopology = null;
+    clearPreview(emptyCopy.invalidPreview);
+    return false;
+  }
 }
 
 function previewDurationSeconds() {
@@ -1553,6 +1591,8 @@ function getTopologyValue() {
 
 function markEditorChanged() {
   state.editorRevision += 1;
+  state.currentTopology = null;
+  clearPreview("Validate the topology to preview traffic.");
   setValidateButton("Validate");
 }
 
