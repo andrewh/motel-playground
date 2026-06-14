@@ -191,6 +191,23 @@ try {
   if (!metricState.text.includes("histogram") || !logState.text.includes("INFO")) {
     throw new Error(`signal tabs did not expose expected details: ${JSON.stringify({ metricState, logState })}`);
   }
+  await setResultFilter(client, "gateway");
+  const gatewayFilter = await waitFor(async () => {
+    const state = await evaluate(client, `(${resultFilterState})()`);
+    return state.spans > 0 && state.metrics > 0 && state.logs > 0 ? state : false;
+  }, "shared result filter applied to all signal tabs");
+  if (!gatewayFilter.spanCountText.includes("match") || !gatewayFilter.logCountText.includes("match")) {
+    throw new Error(`result filter counts did not reflect matching state: ${JSON.stringify(gatewayFilter)}`);
+  }
+  await setResultFilter(client, "/api/v1/users");
+  const attributeFilter = await waitFor(async () => {
+    const state = await evaluate(client, `(${resultFilterState})()`);
+    return state.spans > 0 && state.metrics === 0 && state.logs === 0 ? state : false;
+  }, "span attribute filter applied");
+  if (!attributeFilter.traceText.includes("GET /users")) {
+    throw new Error(`span attribute filter did not expose matching span: ${JSON.stringify(attributeFilter)}`);
+  }
+  await setResultFilter(client, "");
 
   await setEditorValue(client, erroredTopology);
   await evaluate(client, `document.querySelector("#validate-button").click()`);
@@ -383,6 +400,16 @@ async function setEditorValue(client, value) {
   `);
 }
 
+async function setResultFilter(client, value) {
+  await evaluate(client, `
+    (() => {
+      const input = document.querySelector("#result-filter");
+      input.value = ${JSON.stringify(value)};
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    })()
+  `);
+}
+
 async function generateDifferentTopology(client, previousValue) {
   await evaluate(client, `document.querySelector("#generate-button").click()`);
   return waitFor(async () => {
@@ -455,6 +482,26 @@ function logFilterState() {
     active: document.querySelector("#log-severity-filter").getAttribute("aria-pressed") === "true",
     disabled: document.querySelector("#log-severity-filter").disabled,
     count: document.querySelector("#log-filter-count").textContent,
+  };
+}
+
+function resultFilterState() {
+  document.querySelector("[data-view='traces']").click();
+  const traceText = document.querySelector("#traces").textContent;
+  document.querySelector("[data-view='metrics']").click();
+  const metricText = document.querySelector("#signal-metrics").textContent;
+  document.querySelector("[data-view='logs']").click();
+  const logText = document.querySelector("#signal-logs").textContent;
+  return {
+    filter: document.querySelector("#result-filter").value,
+    spans: document.querySelectorAll("#traces .trace-group").length,
+    metrics: document.querySelectorAll("#signal-metrics .signal-item").length,
+    logs: document.querySelectorAll("#signal-logs .signal-item").length,
+    traceText,
+    metricText,
+    logText,
+    spanCountText: document.querySelector("#span-filter-count").textContent,
+    logCountText: document.querySelector("#log-filter-count").textContent,
   };
 }
 

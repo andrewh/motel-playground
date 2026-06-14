@@ -431,6 +431,10 @@ textarea {
   padding: var(--space-4);
 }
 
+.filter-field {
+  flex: 1 1 220px;
+}
+
 label {
   display: grid;
   gap: var(--space-2);
@@ -448,6 +452,11 @@ input {
   color: var(--ink);
   padding: 0 var(--space-3);
   font-variant-numeric: tabular-nums;
+}
+
+input[type="search"] {
+  width: 100%;
+  min-width: 180px;
 }
 
 .file-input {
@@ -1024,6 +1033,10 @@ pre {
   .controls {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .filter-field {
+    grid-column: 1 / -1;
   }
 
   input {
