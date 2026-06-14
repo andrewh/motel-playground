@@ -335,6 +335,54 @@ try {
   }
   await dispatchShortcut(client, { key: "q", ctrlKey: true, selector: "#raw-output .CodeMirror textarea" });
   await evaluate(client, `document.querySelector("[data-view='metrics']").click()`);
+  await evaluate(client, `(${installResultDownloadSpy})()`);
+  await evaluate(client, `document.querySelector("#export-results-button").click()`);
+  const exportedResults = await waitFor(async () => {
+    const state = await evaluate(client, `(${resultDownloadState})()`);
+    return state.ready ? state : false;
+  }, "result JSON exported");
+  if (
+    exportedResults.kind !== "motel-playground-run"
+    || exportedResults.seed !== "42"
+    || exportedResults.traces < 1
+    || exportedResults.spans < 1
+    || exportedResults.metrics < 1
+    || exportedResults.logs < 1
+    || !exportedResults.topology.includes("gateway.request.duration")
+  ) {
+    throw new Error(`result export did not include the full run: ${JSON.stringify(exportedResults)}`);
+  }
+  if (!exportedResults.download.endsWith(".json") || !exportedResults.status.includes("Exported")) {
+    throw new Error(`result export did not expose a JSON download: ${JSON.stringify(exportedResults)}`);
+  }
+
+  await client.send("Page.navigate", { url: appURL });
+  await waitFor(async () => evaluate(client, `document.querySelector("#runtime-status")?.textContent === "Runtime ready"`), "runtime ready after result import reload");
+  await importResultFile(client, exportedResults.text);
+  const importedResults = await waitFor(async () => {
+    const state = await evaluate(client, `(${resultImportState})()`);
+    return state.ready ? state : false;
+  }, "result JSON imported");
+  if (
+    !importedResults.topologyRestored
+    || importedResults.duration !== "1"
+    || importedResults.seed !== "42"
+    || importedResults.traces < 1
+    || importedResults.metrics < 1
+    || importedResults.logs < 1
+    || importedResults.exportDisabled
+  ) {
+    throw new Error(`result import did not restore the run: ${JSON.stringify(importedResults)}`);
+  }
+  await evaluate(client, `document.querySelector("[data-view='raw']").click()`);
+  const importedRaw = await waitFor(async () => {
+    const state = await evaluate(client, `(${rawJsonState})()`);
+    return state.validJson && state.hasRunKeys ? state : false;
+  }, "imported raw JSON rendered");
+  if (!importedRaw.formatted) {
+    throw new Error(`imported raw JSON was not formatted: ${JSON.stringify(importedRaw)}`);
+  }
+  await evaluate(client, `document.querySelector("[data-view='metrics']").click()`);
   const metricState = await waitFor(async () => {
     const state = await evaluate(client, `(${signalTabState})("metrics")`);
     return state.rows > 0 && state.text.includes("gateway.request.duration") ? state : false;
@@ -579,6 +627,19 @@ async function setResultFilter(client, value) {
   `);
 }
 
+async function importResultFile(client, text) {
+  await evaluate(client, `
+    (() => {
+      const input = document.querySelector("#result-file");
+      const file = new File([${JSON.stringify(text)}], "shared-results.json", { type: "application/json" });
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    })()
+  `);
+}
+
 async function dispatchShortcut(client, { key, ctrlKey = false, metaKey = false, shiftKey = false, altKey = false, selector = "document" }) {
   await evaluate(client, `
     (() => {
@@ -681,6 +742,64 @@ function oversizedShareState() {
   return {
     status,
     tooLarge: status.includes("too large"),
+  };
+}
+
+function installResultDownloadSpy() {
+  window.__resultDownload = {};
+  URL.createObjectURL = (blob) => {
+    window.__resultDownload.blob = blob;
+    return "blob:motel-results";
+  };
+  URL.revokeObjectURL = () => {};
+  HTMLAnchorElement.prototype.click = function () {
+    if (this.download?.endsWith(".json")) {
+      window.__resultDownload.download = this.download;
+      window.__resultDownload.href = this.href;
+    }
+  };
+}
+
+async function resultDownloadState() {
+  const blob = window.__resultDownload?.blob;
+  let text = "";
+  let json = null;
+  if (blob) {
+    text = await blob.text();
+    try {
+      json = JSON.parse(text);
+    } catch {
+    }
+  }
+  return {
+    ready: Boolean(json),
+    text,
+    kind: json?.kind,
+    seed: json?.settings?.seed,
+    topology: json?.topology || "",
+    traces: json?.result?.stats?.traces ?? 0,
+    spans: json?.result?.stats?.spans ?? 0,
+    metrics: json?.result?.metrics?.length ?? 0,
+    logs: json?.result?.logs?.length ?? 0,
+    download: window.__resultDownload?.download || "",
+    status: document.querySelector("#share-status").textContent,
+  };
+}
+
+function resultImportState() {
+  return {
+    ready: document.querySelector("#share-status").textContent.includes("Imported")
+      && document.querySelector("#summary-line").textContent.includes("Imported run"),
+    topologyRestored: window.motelPlayground?.getTopology().includes("gateway.request.duration"),
+    duration: document.querySelector("#duration").value,
+    seed: document.querySelector("#seed").value,
+    traces: Number(document.querySelector("#metric-traces").textContent),
+    spans: Number(document.querySelector("#metric-spans").textContent),
+    metrics: document.querySelectorAll("#signal-metrics .signal-item").length,
+    logs: document.querySelectorAll("#signal-logs .signal-item").length,
+    exportDisabled: document.querySelector("#export-results-button").disabled,
+    status: document.querySelector("#share-status").textContent,
+    summary: document.querySelector("#summary-line").textContent,
   };
 }
 

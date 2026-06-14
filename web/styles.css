@@ -650,6 +650,12 @@ textarea {
   flex: 1 1 220px;
 }
 
+.result-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: end;
+}
+
 label {
   display: grid;
   gap: var(--space-2);
@@ -1295,6 +1301,12 @@ pre {
 
   .filter-field {
     grid-column: 1 / -1;
+  }
+
+  .result-actions {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: 1fr 1fr;
   }
 
   input {

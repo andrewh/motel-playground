@@ -14,6 +14,7 @@ serve: wasm
 test: wasm
 	go test ./...
 	node scripts/share-state-test.mjs
+	node scripts/result-snapshot-test.mjs
 	node scripts/smoke-wasm.mjs
 	node scripts/smoke-browser.mjs
 
@@ -21,10 +22,12 @@ lint:
 	test -z "$$(gofmt -l cmd internal)"
 	go vet ./...
 	node --check scripts/smoke-browser.mjs
+	node --check scripts/result-snapshot-test.mjs
 	node --check scripts/share-state-test.mjs
 	node --check scripts/smoke-wasm.mjs
 	node --check web/app.js
 	node --check web/graph.js
+	node --check web/result-snapshot.mjs
 	node --check web/run-worker.js
 	node --check web/share-state.mjs
 	node --check web/topology-generator.mjs

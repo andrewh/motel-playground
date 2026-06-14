@@ -5,6 +5,13 @@ import {
   isShareURLTooLarge,
   makeShareURL,
 } from "./share-state.mjs";
+import {
+  createResultSnapshot,
+  normalizeResultSnapshot,
+  parseResultSnapshot,
+  resultSnapshotFilename,
+  resultSnapshotMimeType,
+} from "./result-snapshot.mjs";
 
 const sampleTopology = `# Five-service topology demonstrating motel capabilities
 version: 1
@@ -89,6 +96,7 @@ const p5ScriptPath = "./vendor/p5/p5.min.js";
 const state = {
   ready: false,
   lastRun: null,
+  lastRunSource: null,
   currentTopology: null,
   errorTracesOnly: false,
   warnLogsOnly: false,
@@ -131,6 +139,9 @@ const els = {
   load: document.querySelector("#load-button"),
   save: document.querySelector("#save-button"),
   share: document.querySelector("#share-button"),
+  resultFile: document.querySelector("#result-file"),
+  importResults: document.querySelector("#import-results-button"),
+  exportResults: document.querySelector("#export-results-button"),
   generate: document.querySelector("#generate-button"),
   validate: document.querySelector("#validate-button"),
   run: document.querySelector("#run-button"),
@@ -203,7 +214,12 @@ els.save.addEventListener("click", () => saveTopology());
 els.share.addEventListener("click", () => {
   void copyShareURL();
 });
+els.importResults.addEventListener("click", () => els.resultFile.click());
+els.exportResults.addEventListener("click", () => exportResults());
 els.file.addEventListener("change", () => loadTopologyFile());
+els.resultFile.addEventListener("change", () => {
+  void loadResultsFile();
+});
 els.errorFilter.addEventListener("click", () => {
   state.errorTracesOnly = !state.errorTracesOnly;
   renderSpans(state.lastRun?.spans ?? []);
@@ -387,6 +403,8 @@ function initEditors() {
     setTopology: (value) => setTopologyValue(value),
     getShareURL: () => buildShareURL().href,
     restoreShareState: () => restoreShareStateFromURL(),
+    createResultSnapshot: () => makeCurrentResultSnapshot(),
+    importResultSnapshot: (snapshot) => applyResultSnapshot(normalizeResultSnapshot(snapshot)),
   };
 }
 
@@ -601,17 +619,19 @@ async function run() {
   if (!state.ready || state.runBusy) return;
   const runID = state.activeRunID + 1;
   const editorRevision = state.editorRevision;
+  const topology = getTopologyValue();
+  const settings = currentRunSettings();
   state.activeRunID = runID;
   setRunBusy(true, "Running topology in background");
   setValidateButton("Validate");
   try {
     const result = JSON.parse(await runClient().run({
-      topology: getTopologyValue(),
+      topology,
       duration: Number(els.duration.value),
       seed: Number(els.seed.value),
     }));
     if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
-    renderRun(result);
+    renderRun(result, { topology, settings });
     renderRawJson(result);
   } catch (error) {
     if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
@@ -679,22 +699,98 @@ async function loadTopologyFile() {
 }
 
 function saveTopology() {
-  const blob = new Blob([getTopologyValue()], { type: "text/yaml" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = topologyFilename();
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  const filename = topologyFilename();
+  downloadText(getTopologyValue(), { filename, type: "text/yaml" });
   els.summary.classList.remove("bad");
-  els.summary.textContent = `Saved ${link.download}`;
+  els.summary.textContent = `Saved ${filename}`;
 }
 
 function topologyFilename() {
   const seed = Math.max(1, Math.floor(Number(els.seed.value) || Date.now()));
   return `motel-topology-${seed}.yaml`;
+}
+
+function exportResults() {
+  if (!state.lastRun) {
+    setShareStatus("Run results are not available.", "bad");
+    return;
+  }
+  const snapshot = makeCurrentResultSnapshot();
+  const filename = resultSnapshotFilename(snapshot.settings);
+  downloadText(`${JSON.stringify(snapshot, null, 2)}\n`, {
+    filename,
+    type: resultSnapshotMimeType,
+  });
+  setShareStatus(`Exported ${filename}`, "good");
+}
+
+async function loadResultsFile() {
+  const [file] = els.resultFile.files ?? [];
+  if (!file) return;
+  try {
+    const snapshot = parseResultSnapshot(await file.text());
+    await applyResultSnapshot(snapshot);
+    setShareStatus(`Imported ${file.name}`, "good");
+  } catch (error) {
+    setShareStatus(`Could not import results: ${error.message}`, "bad");
+  } finally {
+    els.resultFile.value = "";
+  }
+}
+
+function makeCurrentResultSnapshot() {
+  return createResultSnapshot({
+    topology: state.lastRunSource?.topology ?? getTopologyValue(),
+    settings: state.lastRunSource?.settings ?? currentRunSettings(),
+    result: state.lastRun,
+  });
+}
+
+async function applyResultSnapshot(snapshot) {
+  setTopologyValue(snapshot.topology);
+  applyNumberInput(els.duration, snapshot.settings.duration);
+  applyNumberInput(els.seed, snapshot.settings.seed);
+  applyNumberInput(els.maxNodes, snapshot.settings.maxNodes);
+  els.resultFilter.value = "";
+  state.resultFilter = "";
+  state.errorTracesOnly = false;
+  state.warnLogsOnly = false;
+  setValidateButton("Validate");
+  renderRun(snapshot.result, {
+    topology: snapshot.topology,
+    settings: snapshot.settings,
+  });
+  renderRawJson(snapshot.result);
+  if (state.ready) {
+    await renderPreview();
+  }
+  const stats = snapshot.result.stats;
+  els.summary.classList.add("good");
+  els.summary.classList.remove("bad");
+  els.summary.textContent = `Imported run: ${stats.traces} traces, ${stats.spans} spans, ${stats.errors} errors`;
+}
+
+function currentRunSettings() {
+  return {
+    duration: els.duration.value,
+    seed: els.seed.value,
+    maxNodes: els.maxNodes.value,
+  };
+}
+
+function downloadText(value, { filename, type }) {
+  downloadBlob(new Blob([value], { type }), filename);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 async function renderPreview() {
@@ -733,9 +829,10 @@ function renderValidation(result) {
   return true;
 }
 
-function renderRun(result) {
+function renderRun(result, source = { topology: getTopologyValue(), settings: currentRunSettings() }) {
   if (!result.ok) {
     state.lastRun = null;
+    state.lastRunSource = null;
     state.currentTopology = null;
     clearPreview("Fix the run error to preview traffic.");
     clearRunOutput(emptyCopy.runFailedSpans);
@@ -744,10 +841,12 @@ function renderRun(result) {
     els.summary.textContent = result.errors?.[0]?.message ?? "Run failed";
     els.summary.classList.remove("good");
     els.summary.classList.add("bad");
+    syncControls();
     return;
   }
   const stats = result.stats;
   state.lastRun = result;
+  state.lastRunSource = source;
   state.currentTopology = result.topology;
   els.metrics.traces.textContent = stats.traces;
   els.metrics.spans.textContent = stats.spans;
@@ -760,10 +859,12 @@ function renderRun(result) {
   renderMetrics(result.metrics ?? []);
   renderLogs(result.logs ?? []);
   renderMap(result.topology, result.spans ?? []);
+  syncControls();
 }
 
 function renderRunWorkerError(error) {
   state.lastRun = null;
+  state.lastRunSource = null;
   state.currentTopology = null;
   clearPreview("Fix the run error to preview traffic.");
   clearRunOutput(emptyCopy.runFailedSpans);
@@ -773,6 +874,7 @@ function renderRunWorkerError(error) {
   els.summary.classList.remove("good");
   els.summary.classList.add("bad");
   renderRawText(String(error?.stack || error?.message || error));
+  syncControls();
 }
 
 function renderMetrics(metrics) {
@@ -1162,6 +1264,7 @@ function loadP5() {
 
 function clearRunOutput(message) {
   state.lastRun = null;
+  state.lastRunSource = null;
   state.errorTracesOnly = false;
   state.warnLogsOnly = false;
   syncSpanFilter(0, 0);
@@ -1170,6 +1273,7 @@ function clearRunOutput(message) {
   els.metrics.spans.textContent = "0";
   els.metrics.errors.textContent = "0%";
   els.traces.innerHTML = `<p class="empty">${escapeHtml(message)}</p>`;
+  syncControls();
 }
 
 function clearSignalOutput(metricMessage = emptyCopy.metrics, logMessage = emptyCopy.logs) {
@@ -1368,6 +1472,8 @@ function syncControls(label) {
   els.load.disabled = state.runtimeBusy;
   els.save.disabled = state.runtimeBusy;
   els.generate.disabled = state.runtimeBusy;
+  els.importResults.disabled = state.runtimeBusy || !state.ready;
+  els.exportResults.disabled = state.runtimeBusy || !state.lastRun;
   els.validate.disabled = state.runtimeBusy || !state.ready;
   els.run.disabled = state.runtimeBusy || state.runBusy || !state.ready;
 }
