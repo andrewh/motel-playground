@@ -656,6 +656,10 @@ textarea {
   align-items: end;
 }
 
+.print-report {
+  display: none;
+}
+
 label {
   display: grid;
   gap: var(--space-2);
@@ -1306,7 +1310,7 @@ pre {
   .result-actions {
     display: grid;
     grid-column: 1 / -1;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
   input {
@@ -1383,5 +1387,220 @@ pre {
     animation-duration: 0.01ms !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  html,
+  body {
+    min-width: 0;
+    background: white;
+    color: oklch(18% 0 0);
+  }
+
+  body {
+    padding: 0;
+    font-size: 10pt;
+    line-height: 1.42;
+  }
+
+  .shell,
+  .modal-backdrop {
+    display: none !important;
+  }
+
+  .print-report {
+    display: block;
+  }
+
+  .report-document {
+    color: oklch(18% 0 0);
+    font-family: var(--font-ui);
+  }
+
+  .report-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12mm;
+    align-items: start;
+    margin-bottom: 9mm;
+    padding-bottom: 6mm;
+    border-bottom: 1px solid oklch(68% 0 0);
+  }
+
+  .report-header h1 {
+    color: oklch(18% 0 0);
+    font-size: 22pt;
+    font-weight: 660;
+    text-transform: none;
+  }
+
+  .report-kicker,
+  .report-meta dt,
+  .report-facts dt,
+  .report-section h3,
+  .report-note {
+    color: oklch(42% 0 0);
+    font-size: 8pt;
+    font-weight: 650;
+    text-transform: uppercase;
+  }
+
+  .report-kicker {
+    margin-bottom: 2mm;
+  }
+
+  .report-meta,
+  .report-facts {
+    display: grid;
+    gap: 2.4mm;
+    margin: 0;
+  }
+
+  .report-meta {
+    grid-template-columns: repeat(3, auto);
+  }
+
+  .report-meta div,
+  .report-facts div {
+    min-width: 0;
+  }
+
+  .report-meta dd,
+  .report-facts dd {
+    margin: 1mm 0 0;
+    color: oklch(18% 0 0);
+    font-weight: 650;
+  }
+
+  .report-facts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .report-section {
+    margin-bottom: 8mm;
+    break-inside: avoid;
+  }
+
+  .report-wide-section {
+    break-inside: auto;
+  }
+
+  .report-section h2 {
+    margin-bottom: 3mm;
+    color: oklch(18% 0 0);
+    font-size: 13pt;
+    font-weight: 660;
+  }
+
+  .report-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.45fr) minmax(0, 0.55fr);
+    gap: 6mm;
+  }
+
+  .report-list {
+    margin: 0;
+    padding-left: 5mm;
+  }
+
+  .report-list li {
+    margin-bottom: 1.4mm;
+    overflow-wrap: anywhere;
+  }
+
+  .report-map {
+    width: 100%;
+    height: auto;
+    max-height: 150mm;
+    border: 1px solid oklch(72% 0 0);
+    background: white;
+  }
+
+  .report-edge {
+    stroke: oklch(42% 0 0);
+    stroke-linecap: round;
+  }
+
+  .report-edge-async {
+    stroke-dasharray: 5 4;
+  }
+
+  #report-arrow path {
+    fill: oklch(42% 0 0);
+  }
+
+  .report-node rect {
+    fill: oklch(96% 0 0);
+    stroke: oklch(52% 0 0);
+    stroke-width: 1;
+  }
+
+  .report-node-root rect {
+    fill: oklch(90% 0 0);
+    stroke: oklch(24% 0 0);
+  }
+
+  .report-node text {
+    fill: oklch(18% 0 0);
+    font: 9pt var(--font-ui);
+    font-weight: 650;
+  }
+
+  .report-node-detail {
+    fill: oklch(42% 0 0);
+    font-size: 7.5pt;
+    font-weight: 560;
+  }
+
+  .report-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  .report-table tr {
+    break-inside: avoid;
+  }
+
+  .report-table th,
+  .report-table td {
+    border: 1px solid oklch(78% 0 0);
+    padding: 2mm;
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+
+  .report-table th {
+    background: oklch(94% 0 0);
+    color: oklch(34% 0 0);
+    font-size: 8pt;
+    font-weight: 680;
+    text-transform: uppercase;
+  }
+
+  .report-empty {
+    margin: 0;
+    color: oklch(42% 0 0);
+  }
+
+  .report-note {
+    margin-top: 2mm;
+  }
+
+  .report-code {
+    min-height: 0;
+    border: 1px solid oklch(78% 0 0);
+    background: oklch(96% 0 0);
+    color: oklch(18% 0 0);
+    padding: 3mm;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font: 8pt/1.45 var(--font-code);
   }
 }
