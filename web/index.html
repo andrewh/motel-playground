@@ -4,6 +4,8 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>motel playground</title>
+    <link rel="stylesheet" href="./vendor/codemirror/codemirror.min.css" />
+    <link rel="stylesheet" href="./vendor/codemirror/foldgutter.min.css" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -113,7 +115,7 @@
             <div id="service-map" class="service-map"></div>
           </section>
           <section class="view" id="view-raw" aria-label="Raw output">
-            <pre id="raw-output"></pre>
+            <div id="raw-output" class="raw-output"></div>
           </section>
         </div>
       </section>
@@ -151,6 +153,13 @@
     </div>
 
     <script src="./vendor/p5/p5.min.js"></script>
+    <script src="./vendor/codemirror/codemirror.min.js"></script>
+    <script src="./vendor/codemirror/yaml.min.js"></script>
+    <script src="./vendor/codemirror/javascript.min.js"></script>
+    <script src="./vendor/codemirror/foldcode.min.js"></script>
+    <script src="./vendor/codemirror/foldgutter.min.js"></script>
+    <script src="./vendor/codemirror/brace-fold.min.js"></script>
+    <script src="./vendor/codemirror/indent-fold.min.js"></script>
     <script src="./wasm_exec.js"></script>
     <script src="./graph.js"></script>
     <script src="./app.js" type="module"></script>

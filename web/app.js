@@ -144,6 +144,10 @@ const els = {
 };
 
 const resultTabs = Array.from(document.querySelectorAll(".tab"));
+const editors = {
+  topology: null,
+  raw: null,
+};
 let lastShortcutFocus = null;
 
 els.editor.value = sampleTopology;
@@ -151,6 +155,7 @@ clearMap(emptyCopy.map);
 clearSignalOutput();
 
 initTheme();
+initEditors();
 
 for (const tab of resultTabs) {
   tab.addEventListener("click", () => {
@@ -199,6 +204,10 @@ els.duration.addEventListener("input", () => {
   }
 });
 els.editor.addEventListener("input", () => {
+  if (editors.topology && editors.topology.getValue() !== els.editor.value) {
+    editors.topology.setValue(els.editor.value);
+    return;
+  }
   markEditorChanged();
 });
 
@@ -212,6 +221,10 @@ function activateTab(tab) {
   document.querySelector(`#view-${tab.dataset.view}`).classList.add("active");
   if (tab.dataset.view === "map" && state.currentTopology) {
     renderMap(state.currentTopology, state.lastRun?.spans ?? []);
+  }
+  if (tab.dataset.view === "raw") {
+    editors.raw?.refresh();
+    if (editors.raw) syncCodeMirrorGutter(editors.raw);
   }
 }
 
@@ -304,6 +317,54 @@ function focusResultFilter() {
   els.resultFilter.select();
 }
 
+function initEditors() {
+  if (!window.CodeMirror) return;
+  editors.topology = window.CodeMirror.fromTextArea(els.editor, {
+    mode: "yaml",
+    lineNumbers: true,
+    lineWrapping: false,
+    fixedGutter: true,
+    foldGutter: true,
+    gutters: ["CodeMirror-linenumbers", "CodeMirror-foldgutter"],
+    indentUnit: 2,
+    tabSize: 2,
+    extraKeys: {
+      Tab: (editor) => editor.replaceSelection("  ", "end"),
+      Esc: (editor) => editor.getInputField().blur(),
+      "Ctrl-Q": (editor) => editor.foldCode(editor.getCursor()),
+    },
+  });
+  editors.topology.on("change", () => {
+    editors.topology.save();
+    syncCodeMirrorGutter(editors.topology);
+    markEditorChanged();
+  });
+  syncCodeMirrorGutter(editors.topology);
+
+  editors.raw = window.CodeMirror(els.raw, {
+    value: "",
+    mode: { name: "javascript", json: true },
+    lineNumbers: true,
+    readOnly: true,
+    lineWrapping: false,
+    fixedGutter: true,
+    foldGutter: true,
+    gutters: ["CodeMirror-linenumbers", "CodeMirror-foldgutter"],
+    indentUnit: 2,
+    tabSize: 2,
+    extraKeys: {
+      Esc: (editor) => editor.getInputField().blur(),
+      "Ctrl-Q": (editor) => editor.foldCode(editor.getCursor()),
+    },
+  });
+  syncCodeMirrorGutter(editors.raw);
+
+  window.motelPlayground = {
+    getTopology: () => getTopologyValue(),
+    setTopology: (value) => setTopologyValue(value),
+  };
+}
+
 function openShortcutHelp() {
   if (isShortcutHelpOpen()) return;
   lastShortcutFocus = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
@@ -369,7 +430,7 @@ async function loadWasm() {
   } catch (error) {
     els.status.textContent = "Build runtime first";
     els.status.classList.add("error");
-    els.raw.textContent = String(error);
+    renderRawText(String(error));
   }
 }
 
@@ -381,12 +442,12 @@ async function validate({ passive = false } = {}) {
     setValidateButton("Validating");
   }
   try {
-    const result = JSON.parse(await window.motelValidate(els.editor.value));
+    const result = JSON.parse(await window.motelValidate(getTopologyValue()));
     valid = renderValidation(result);
     if (valid) {
       await renderPreview();
     }
-    els.raw.textContent = JSON.stringify(result, null, 2);
+    renderRawJson(result);
   } finally {
     setRuntimeBusy(false);
     if (!passive) {
@@ -404,13 +465,13 @@ async function run() {
   setValidateButton("Validate");
   try {
     const result = JSON.parse(await runClient().run({
-      topology: els.editor.value,
+      topology: getTopologyValue(),
       duration: Number(els.duration.value),
       seed: Number(els.seed.value),
     }));
     if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
     renderRun(result);
-    els.raw.textContent = JSON.stringify(result, null, 2);
+    renderRawJson(result);
   } catch (error) {
     if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
     renderRunWorkerError(error);
@@ -426,12 +487,12 @@ async function generateTopology() {
   const seed = nextRandomSeed(currentSeed);
   const topology = randomTopologyYaml(seed, { maxNodes: maxRandomNodes() });
   els.seed.value = String(seed);
-  replaceEditorValue(topology);
+  setTopologyValue(topology);
   els.summary.classList.remove("bad");
   els.summary.textContent = "Generated topology";
   clearRunOutput(emptyCopy.spans);
   clearSignalOutput();
-  els.raw.textContent = "";
+  clearRawOutput();
   if (state.ready) await validate({ passive: true });
 }
 
@@ -460,12 +521,12 @@ async function loadTopologyFile() {
   const [file] = els.file.files ?? [];
   if (!file) return;
   try {
-    replaceEditorValue(await file.text());
+    setTopologyValue(await file.text());
     els.summary.classList.remove("bad", "good");
     els.summary.textContent = `Loaded ${file.name}`;
     clearRunOutput(emptyCopy.spans);
     clearSignalOutput();
-    els.raw.textContent = "";
+    clearRawOutput();
     if (state.ready) await validate({ passive: true });
   } catch (error) {
     els.summary.textContent = `Could not load file: ${error.message}`;
@@ -477,7 +538,7 @@ async function loadTopologyFile() {
 }
 
 function saveTopology() {
-  const blob = new Blob([els.editor.value], { type: "text/yaml" });
+  const blob = new Blob([getTopologyValue()], { type: "text/yaml" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -496,7 +557,7 @@ function topologyFilename() {
 }
 
 async function renderPreview() {
-  const svg = await window.motelPreview(els.editor.value, previewDurationSeconds());
+  const svg = await window.motelPreview(getTopologyValue(), previewDurationSeconds());
   els.preview.innerHTML = svg;
 }
 
@@ -570,7 +631,7 @@ function renderRunWorkerError(error) {
   els.summary.textContent = error?.message || "Run failed";
   els.summary.classList.remove("good");
   els.summary.classList.add("bad");
-  els.raw.textContent = String(error?.stack || error?.message || error);
+  renderRawText(String(error?.stack || error?.message || error));
 }
 
 function renderMetrics(metrics) {
@@ -845,6 +906,44 @@ function spanFact(label, value) {
   return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
+function renderRawJson(value) {
+  renderRawEditor(JSON.stringify(value, null, 2), { json: true });
+}
+
+function renderRawText(value) {
+  renderRawEditor(value, { json: false });
+}
+
+function clearRawOutput() {
+  renderRawEditor("", { json: false });
+}
+
+function renderRawEditor(value, { json }) {
+  els.raw.classList.toggle("raw-json", json);
+  els.raw.classList.toggle("raw-text", !json);
+  if (!editors.raw) {
+    els.raw.innerHTML = `<pre>${escapeHtml(value)}</pre>`;
+    return;
+  }
+  editors.raw.setOption("mode", json ? { name: "javascript", json: true } : null);
+  editors.raw.setOption("foldGutter", json);
+  editors.raw.setValue(value);
+  editors.raw.refresh();
+  syncCodeMirrorGutter(editors.raw);
+}
+
+function syncCodeMirrorGutter(editor) {
+  requestAnimationFrame(() => {
+    const wrapper = editor.getWrapperElement();
+    const gutter = wrapper.querySelector(".CodeMirror-gutters");
+    if (!gutter) return;
+    const width = gutter.getBoundingClientRect().width;
+    if (width > 0) {
+      wrapper.style.setProperty("--cm-gutter-width", `${width}px`);
+    }
+  });
+}
+
 function renderMap(topology, spans) {
   if (!topology) return;
   if (!document.querySelector("#view-map").classList.contains("active")) return;
@@ -906,9 +1005,21 @@ function setValidateButton(label, stateClass) {
   if (stateClass) els.validate.classList.add(stateClass);
 }
 
-function replaceEditorValue(value) {
+function setTopologyValue(value) {
+  if (editors.topology) {
+    editors.topology.setValue(value);
+    editors.topology.save();
+    return;
+  }
   els.editor.value = value;
   markEditorChanged();
+}
+
+function getTopologyValue() {
+  if (editors.topology) {
+    editors.topology.save();
+  }
+  return editors.topology?.getValue() ?? els.editor.value;
 }
 
 function markEditorChanged() {

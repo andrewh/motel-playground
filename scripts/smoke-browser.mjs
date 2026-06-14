@@ -143,19 +143,20 @@ try {
   if (!closedHelp.focusedHelpButton) {
     throw new Error(`shortcut help did not restore focus: ${JSON.stringify(closedHelp)}`);
   }
-  await evaluate(client, `document.querySelector("#editor").focus()`);
-  await dispatchShortcut(client, { key: "?", selector: "#editor" });
+  await evaluate(client, `window.motelPlayground.setTopology(window.motelPlayground.getTopology())`);
+  await evaluate(client, `document.querySelector(".editor-pane .CodeMirror").CodeMirror.focus()`);
+  await dispatchShortcut(client, { key: "?", selector: ".editor-pane .CodeMirror textarea" });
   const ignoredEditorHelp = await evaluate(client, `(${shortcutHelpState})()`);
   if (ignoredEditorHelp.open) {
     throw new Error(`shortcut help opened while typing in editor: ${JSON.stringify(ignoredEditorHelp)}`);
   }
-  await dispatchShortcut(client, { key: "k", ctrlKey: true, selector: "#editor" });
-  const editorKeptFocus = await evaluate(client, `document.activeElement?.id === "editor"`);
+  await dispatchShortcut(client, { key: "k", ctrlKey: true, selector: ".editor-pane .CodeMirror textarea" });
+  const editorKeptFocus = await evaluate(client, `document.activeElement === document.querySelector(".editor-pane .CodeMirror textarea")`);
   if (!editorKeptFocus) {
     throw new Error("filter shortcut fired while typing in the editor");
   }
-  await dispatchShortcut(client, { key: "Escape", selector: "#editor" });
-  const editorBlurred = await waitFor(async () => evaluate(client, `document.activeElement?.id !== "editor"`), "editor escape blur");
+  await dispatchShortcut(client, { key: "Escape", selector: ".editor-pane .CodeMirror textarea" });
+  const editorBlurred = await waitFor(async () => evaluate(client, `document.activeElement !== document.querySelector(".editor-pane .CodeMirror textarea")`), "editor escape blur");
   if (!editorBlurred) {
     throw new Error("Escape did not leave the editor field");
   }
@@ -181,7 +182,7 @@ try {
     return state.nonblankCanvas || state.fallbackNodes >= 2 ? state : false;
   }, "service map rendered");
 
-  const sampleTopology = await evaluate(client, `document.querySelector("#editor").value`);
+  const sampleTopology = await evaluate(client, `window.motelPlayground.getTopology()`);
   const maxNodeControl = await evaluate(client, `(() => {
     const input = document.querySelector("#max-nodes");
     return { value: input.value, min: input.min, max: input.max, step: input.step };
@@ -226,6 +227,37 @@ try {
     throw new Error(`background run status did not describe worker execution: ${JSON.stringify(controlsDuringRun)}`);
   }
   await waitFor(async () => Number(await evaluate(client, `document.querySelector("#metric-spans").textContent`)) > 0, "spans captured");
+  await evaluate(client, `document.querySelector("[data-view='raw']").click()`);
+  const rawExpanded = await waitFor(async () => {
+    const state = await evaluate(client, `(${rawJsonState})()`);
+    return state.foldControls > 0
+      && state.lines > 8
+      && state.hasBraces
+      && state.hasCommas
+      && state.hasRunKeys
+      && state.validJson
+      && state.formatted
+      && state.editorTextInset
+      ? state
+      : false;
+  }, "raw JSON tree rendered");
+  if (!rawExpanded.gutterContained) {
+    throw new Error(`raw JSON line numbers escaped the gutter: ${JSON.stringify(rawExpanded)}`);
+  }
+  await evaluate(client, `(() => {
+    const editor = document.querySelector("#raw-output .CodeMirror").CodeMirror;
+    editor.focus();
+    editor.setCursor({ line: 0, ch: 0 });
+  })()`);
+  await dispatchShortcut(client, { key: "q", ctrlKey: true, selector: "#raw-output .CodeMirror textarea" });
+  const rawCollapsed = await waitFor(async () => {
+    const state = await evaluate(client, `(${rawJsonState})()`);
+    return state.foldMarks > 0 ? state : false;
+  }, "raw JSON tree collapsed");
+  if (rawCollapsed.foldControls < 1) {
+    throw new Error(`raw JSON collapse did not leave a visible folded control: ${JSON.stringify({ rawExpanded, rawCollapsed })}`);
+  }
+  await dispatchShortcut(client, { key: "q", ctrlKey: true, selector: "#raw-output .CodeMirror textarea" });
   await evaluate(client, `document.querySelector("[data-view='metrics']").click()`);
   const metricState = await waitFor(async () => {
     const state = await evaluate(client, `(${signalTabState})("metrics")`);
@@ -441,11 +473,16 @@ async function evaluate(client, expression) {
 async function setEditorValue(client, value) {
   await evaluate(client, `
     (() => {
-      const editor = document.querySelector("#editor");
-      editor.value = ${JSON.stringify(value)};
-      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      window.motelPlayground.setTopology(${JSON.stringify(value)});
     })()
   `);
+  await waitFor(async () => {
+    const state = await evaluate(client, `(() => ({
+      visible: window.motelPlayground.getTopology(),
+      hidden: document.querySelector("#editor").value,
+    }))()`);
+    return state.visible === value && state.hidden === value ? state : false;
+  }, "topology editor synchronized");
 }
 
 async function setResultFilter(client, value) {
@@ -462,8 +499,12 @@ async function dispatchShortcut(client, { key, ctrlKey = false, metaKey = false,
   await evaluate(client, `
     (() => {
       const target = ${selector === "document" ? "document" : `document.querySelector(${JSON.stringify(selector)})`};
+      const keyCode = ${JSON.stringify(keyCodeForShortcut(key))};
       target.dispatchEvent(new KeyboardEvent("keydown", {
         key: ${JSON.stringify(key)},
+        code: ${JSON.stringify(codeForShortcut(key))},
+        keyCode,
+        which: keyCode,
         ctrlKey: ${JSON.stringify(ctrlKey)},
         metaKey: ${JSON.stringify(metaKey)},
         shiftKey: ${JSON.stringify(shiftKey)},
@@ -475,13 +516,27 @@ async function dispatchShortcut(client, { key, ctrlKey = false, metaKey = false,
   `);
 }
 
+function keyCodeForShortcut(key) {
+  if (key.length === 1) return key.toUpperCase().charCodeAt(0);
+  if (key === "Escape") return 27;
+  if (key === "Enter") return 13;
+  if (key === "Tab") return 9;
+  return 0;
+}
+
+function codeForShortcut(key) {
+  if (/^[a-z]$/i.test(key)) return `Key${key.toUpperCase()}`;
+  if (/^[0-9]$/.test(key)) return `Digit${key}`;
+  return key;
+}
+
 async function generateDifferentTopology(client, previousValue) {
   await evaluate(client, `document.querySelector("#generate-button").click()`);
   return waitFor(async () => {
     const snapshot = await evaluate(client, `(() => ({
-      value: document.querySelector("#editor").value,
+      value: window.motelPlayground.getTopology(),
       seed: document.querySelector("#seed").value,
-      services: document.querySelector("#editor").value.split("\\ntraffic:")[0].split("\\n").filter((line) => /^  [a-z0-9-]+:$/.test(line)).length,
+      services: window.motelPlayground.getTopology().split("\\ntraffic:")[0].split("\\n").filter((line) => /^  [a-z0-9-]+:$/.test(line)).length,
       rateVariation: document.querySelector("#preview svg")?.dataset.rateVariation,
     }))()`);
     return snapshot.value !== previousValue
@@ -577,6 +632,51 @@ function resultFilterState() {
     logText,
     spanCountText: document.querySelector("#span-filter-count").textContent,
     logCountText: document.querySelector("#log-filter-count").textContent,
+  };
+}
+
+function rawJsonState() {
+  const raw = document.querySelector("#raw-output");
+  const editor = raw.querySelector(".CodeMirror")?.CodeMirror;
+  const value = editor?.getValue() || "";
+  const gutter = raw.querySelector(".CodeMirror-gutters")?.getBoundingClientRect();
+  const line = raw.querySelector(".CodeMirror-line")?.getBoundingClientRect();
+  const lineNumberNodes = Array.from(raw.querySelectorAll(".CodeMirror-linenumber")).slice(0, 20);
+  const lineNumbers = lineNumberNodes.map((line) => line.getBoundingClientRect());
+  const escapedLineNumber = lineNumberNodes
+    .map((line) => ({ text: line.textContent, rect: line.getBoundingClientRect() }))
+    .find(({ rect }) => gutter && rect.right > gutter.right + 0.5);
+  const maxLineNumberRight = lineNumbers.reduce((max, rect) => Math.max(max, rect.right), 0);
+  let validJson = false;
+  try {
+    JSON.parse(value);
+    validJson = true;
+  } catch {
+  }
+  return {
+    foldControls: raw.querySelectorAll(".CodeMirror-foldgutter-open, .CodeMirror-foldgutter-folded").length,
+    foldMarks: editor?.getAllMarks().length || 0,
+    lines: editor?.lineCount() || 0,
+    hasBraces: value.includes("{") && value.includes("}"),
+    hasCommas: value.includes(","),
+    hasRunKeys: value.includes('"ok"') && value.includes('"spans"') && value.includes('"stats"'),
+    validJson,
+    formatted: value.includes('\n  "') && !value.includes("\n      \n"),
+    gutterContained: Boolean(gutter)
+      && maxLineNumberRight <= gutter.right + 0.5
+      && (!line || line.left >= gutter.right - 0.5),
+    editorTextInset: Boolean(gutter && line) && line.left >= gutter.right + 4,
+    gutterRight: gutter?.right ?? 0,
+    lineLeft: line?.left ?? 0,
+    escapedLineNumber: escapedLineNumber
+      ? {
+        text: escapedLineNumber.text,
+        left: escapedLineNumber.rect.left,
+        right: escapedLineNumber.rect.right,
+      }
+      : null,
+    maxLineNumberRight,
+    editorReady: Boolean(editor),
   };
 }
 
