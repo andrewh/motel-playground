@@ -59,6 +59,31 @@
               <button id="run-button" type="button" class="primary" aria-keyshortcuts="Meta+Enter Control+Enter">Run topology</button>
             </div>
           </div>
+          <section class="trace-import-panel" aria-labelledby="trace-import-title">
+            <div class="trace-import-head">
+              <div>
+                <h2 id="trace-import-title">Import traces</h2>
+                <p id="trace-import-status" class="trace-import-status" role="status" aria-live="polite"></p>
+              </div>
+              <div class="trace-import-actions">
+                <input id="trace-file" class="file-input" type="file" accept=".json,.jsonl,application/json,text/plain" />
+                <label>
+                  Format
+                  <select id="trace-format">
+                    <option value="auto">Auto</option>
+                    <option value="otlp">OTLP JSON</option>
+                    <option value="stdouttrace">stdouttrace JSONL</option>
+                  </select>
+                </label>
+                <button id="load-traces-button" type="button">Load trace file</button>
+                <button id="import-traces-button" type="button">Infer topology</button>
+              </div>
+            </div>
+            <label class="trace-input-field">
+              Trace input (max 5 MB)
+              <textarea id="trace-input" class="trace-input" spellcheck="false" placeholder="OTLP JSON or stdouttrace JSONL"></textarea>
+            </label>
+          </section>
           <textarea id="editor" spellcheck="false" aria-label="Topology YAML"></textarea>
         </div>
 

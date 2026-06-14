@@ -2,6 +2,7 @@ package playground
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -288,6 +289,91 @@ func TestShorten(t *testing.T) {
 		})
 	}
 }
+
+func TestImportTracesOTLP(t *testing.T) {
+	result := ImportTraces(testOTLPTrace, traceFormatOTLP)
+	if !result.OK {
+		t.Fatalf("ImportTraces() failed: %#v", result.Diagnostics)
+	}
+	if result.Stats == nil {
+		t.Fatalf("ImportTraces() stats are nil")
+	}
+	if result.Stats.Traces != 1 || result.Stats.Spans != 2 {
+		t.Fatalf("ImportTraces() stats = %#v, want 1 trace and 2 spans", result.Stats)
+	}
+	if !strings.Contains(result.Topology, "api-gateway:") {
+		t.Fatalf("ImportTraces() topology missing api-gateway:\n%s", result.Topology)
+	}
+	if !strings.Contains(result.Topology, "user-service.list") {
+		t.Fatalf("ImportTraces() topology missing inferred call:\n%s", result.Topology)
+	}
+	if len(result.Diagnostics) < 2 || result.Diagnostics[1].Severity != "warning" {
+		t.Fatalf("ImportTraces() diagnostics missing single-trace warning: %#v", result.Diagnostics)
+	}
+}
+
+func TestImportTracesRejectsUnknownFormat(t *testing.T) {
+	result := ImportTraces(testOTLPTrace, "zipkin")
+	if result.OK {
+		t.Fatalf("ImportTraces() with unknown format succeeded")
+	}
+	if len(result.Diagnostics) != 1 || !strings.Contains(result.Diagnostics[0].Message, "unknown trace format") {
+		t.Fatalf("ImportTraces() diagnostics = %#v, want unknown format error", result.Diagnostics)
+	}
+}
+
+const testOTLPTrace = `{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "api-gateway"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {"name": "api-gateway"},
+          "spans": [
+            {
+              "traceId": "AQIDBAUGBwgJCgsMDQ4PEA==",
+              "spanId": "AQIDBAUGBwg=",
+              "parentSpanId": "",
+              "name": "GET /users",
+              "startTimeUnixNano": "1700000000000000000",
+              "endTimeUnixNano": "1700000000030000000",
+              "status": {},
+              "attributes": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "user-service"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {"name": "user-service"},
+          "spans": [
+            {
+              "traceId": "AQIDBAUGBwgJCgsMDQ4PEA==",
+              "spanId": "CQoLDA0ODxA=",
+              "parentSpanId": "AQIDBAUGBwg=",
+              "name": "list",
+              "startTimeUnixNano": "1700000000005000000",
+              "endTimeUnixNano": "1700000000020000000",
+              "status": {},
+              "attributes": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}`
 
 func newLayeredTopology() *synth.Topology {
 	apiRoot := testOperation("api", "root", 0)

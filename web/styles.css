@@ -97,12 +97,14 @@ body.modal-open {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
 
 button,
 input,
+select,
 textarea {
   border-radius: var(--radius-sm);
 }
@@ -136,12 +138,14 @@ button:active {
 
 button:focus,
 input:focus,
+select:focus,
 textarea:focus {
   outline: none;
 }
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible,
 .CodeMirror-focused,
 .skip-link:focus-visible {
@@ -458,7 +462,7 @@ kbd {
 
 .editor-pane {
   display: grid;
-  grid-template-rows: auto minmax(520px, 1fr);
+  grid-template-rows: auto auto minmax(520px, 1fr);
 }
 
 .pane-head {
@@ -517,6 +521,74 @@ button.invalid {
   align-items: end;
 }
 
+.trace-import-panel {
+  display: grid;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in oklch, var(--surface), var(--surface-raised) 52%);
+  padding: var(--space-4);
+}
+
+.trace-import-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  align-items: end;
+}
+
+.trace-import-head p {
+  margin-top: var(--space-2);
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.trace-import-status:empty {
+  display: none;
+}
+
+.trace-import-status.good {
+  color: var(--ready-ink);
+}
+
+.trace-import-status.bad {
+  color: var(--danger);
+}
+
+.trace-import-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: end;
+  align-items: end;
+}
+
+.trace-import-actions button {
+  min-height: 38px;
+  padding: 0 var(--space-3);
+  font-size: 0.78rem;
+  font-weight: 620;
+}
+
+.trace-import-actions label {
+  gap: var(--space-1);
+}
+
+.trace-input-field {
+  gap: var(--space-2);
+}
+
+.trace-input {
+  min-height: 116px;
+  height: 116px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+  padding: var(--space-3);
+  background: var(--surface);
+  color: var(--ink);
+  font: 0.78rem/1.5 var(--font-code);
+}
+
 .field-compact {
   grid-template-columns: auto 78px;
   align-items: center;
@@ -542,6 +614,19 @@ textarea {
   font: 0.83rem/1.58 var(--font-code);
   font-variant-ligatures: none;
   tab-size: 2;
+}
+
+textarea.trace-input {
+  min-height: 116px;
+  height: 116px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+  padding: var(--space-3);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.78rem;
+  line-height: 1.5;
 }
 
 .editor-pane .CodeMirror,
@@ -690,7 +775,8 @@ label,
   display: block;
 }
 
-input {
+input,
+select {
   width: 116px;
   height: 38px;
   border: 1px solid var(--line);
@@ -1274,6 +1360,10 @@ pre {
   .results-pane {
     min-height: 520px;
   }
+
+  textarea.trace-input {
+    min-height: 116px;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1313,15 +1403,21 @@ pre {
   }
 
   .pane-head,
+  .trace-import-head,
   .controls {
     align-items: stretch;
     flex-direction: column;
   }
 
   .actions,
+  .trace-import-actions,
   .controls {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .trace-input-field {
+    grid-column: 1 / -1;
   }
 
   .filter-field {
@@ -1338,7 +1434,8 @@ pre {
     grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
   }
 
-  input {
+  input,
+  select {
     width: 100%;
   }
 

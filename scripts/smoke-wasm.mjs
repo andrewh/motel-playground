@@ -9,6 +9,7 @@ const go = new Go();
 const wasm = await readFile(new URL("../web/motel.wasm", import.meta.url));
 const { instance } = await WebAssembly.instantiate(wasm, go.importObject);
 go.run(instance);
+const traceFixture = await readFile(new URL("../third_party/motel/pkg/synth/traceimport/testdata/single-trace-otlp.json", import.meta.url), "utf8");
 
 const topology = `version: 1
 services:
@@ -119,6 +120,25 @@ if (new Set(orderedSpans.map((span) => span.trace_id)).size < 1) {
 const fractionalRun = JSON.parse(await globalThis.motelRun(topology, 0.5, 7));
 if (!fractionalRun.ok || Math.abs(fractionalRun.limits.duration_seconds - 0.5) > 0.001) {
   throw new Error(`fractional duration was not preserved: ${JSON.stringify(fractionalRun)}`);
+}
+
+const importedTopology = JSON.parse(await globalThis.motelImportTraces(traceFixture, "otlp"));
+if (
+  !importedTopology.ok
+  || importedTopology.stats?.traces !== 1
+  || importedTopology.stats?.spans !== 2
+  || !importedTopology.topology.includes("api-gateway:")
+  || !importedTopology.topology.includes("user-service.list")
+) {
+  throw new Error(`trace import did not infer topology: ${JSON.stringify(importedTopology)}`);
+}
+const autoImportedTopology = JSON.parse(await globalThis.motelImportTraces(traceFixture, "auto"));
+if (!autoImportedTopology.ok || !autoImportedTopology.topology.includes("GET /users")) {
+  throw new Error(`trace auto-detection failed: ${JSON.stringify(autoImportedTopology)}`);
+}
+const rejectedTraceImport = JSON.parse(await globalThis.motelImportTraces(traceFixture, "zipkin"));
+if (rejectedTraceImport.ok || !rejectedTraceImport.diagnostics?.[0]?.message.includes("unknown trace format")) {
+  throw new Error(`trace import accepted an unknown format: ${JSON.stringify(rejectedTraceImport)}`);
 }
 
 for (const seed of [1, 42, 777, 2026]) {
