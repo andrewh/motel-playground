@@ -78,6 +78,8 @@ scenarios:
         error_rate: 15%
 `;
 
+const p5ScriptPath = "./vendor/p5/p5.min.js";
+
 const state = {
   ready: false,
   lastRun: null,
@@ -90,6 +92,10 @@ const state = {
   runBusy: false,
   activeRunID: 0,
   runner: null,
+  p5Loading: null,
+  rawOutput: "",
+  rawOutputJSON: false,
+  rawOutputDirty: false,
 };
 
 const emptyCopy = {
@@ -223,6 +229,7 @@ function activateTab(tab) {
     renderMap(state.currentTopology, state.lastRun?.spans ?? []);
   }
   if (tab.dataset.view === "raw") {
+    flushRawOutput();
     editors.raw?.refresh();
     if (editors.raw) syncCodeMirrorGutter(editors.raw);
   }
@@ -907,15 +914,34 @@ function spanFact(label, value) {
 }
 
 function renderRawJson(value) {
-  renderRawEditor(JSON.stringify(value, null, 2), { json: true });
+  setRawOutput(JSON.stringify(value, null, 2), { json: true });
 }
 
 function renderRawText(value) {
-  renderRawEditor(value, { json: false });
+  setRawOutput(value, { json: false });
 }
 
 function clearRawOutput() {
-  renderRawEditor("", { json: false });
+  setRawOutput("", { json: false });
+}
+
+function setRawOutput(value, { json }) {
+  state.rawOutput = value;
+  state.rawOutputJSON = json;
+  state.rawOutputDirty = true;
+  if (activeResultView() === "raw") {
+    flushRawOutput();
+  }
+}
+
+function flushRawOutput() {
+  if (!state.rawOutputDirty) return;
+  renderRawEditor(state.rawOutput, { json: state.rawOutputJSON });
+  state.rawOutputDirty = false;
+}
+
+function activeResultView() {
+  return document.querySelector(".tab.active")?.dataset.view;
 }
 
 function renderRawEditor(value, { json }) {
@@ -933,7 +959,7 @@ function renderRawEditor(value, { json }) {
 }
 
 function syncCodeMirrorGutter(editor) {
-  requestAnimationFrame(() => {
+  const sync = () => {
     const wrapper = editor.getWrapperElement();
     const gutter = wrapper.querySelector(".CodeMirror-gutters");
     if (!gutter) return;
@@ -941,13 +967,29 @@ function syncCodeMirrorGutter(editor) {
     if (width > 0) {
       wrapper.style.setProperty("--cm-gutter-width", `${width}px`);
     }
-  });
+  };
+  sync();
+  requestAnimationFrame(sync);
 }
 
 function renderMap(topology, spans) {
   if (!topology) return;
   if (!document.querySelector("#view-map").classList.contains("active")) return;
   if (topology.graph && window.renderP5Map) {
+    if (!window.p5) {
+      els.map.classList.remove("p5-map");
+      els.map.innerHTML = `<p class="empty">Loading service map.</p>`;
+      loadP5().then(() => {
+        if (activeResultView() === "map" && state.currentTopology === topology) {
+          renderMap(topology, spans);
+        }
+      }).catch(() => {
+        if (activeResultView() === "map" && state.currentTopology === topology) {
+          window.renderP5Map(els.map, topology.graph, spans);
+        }
+      });
+      return;
+    }
     window.renderP5Map(els.map, topology.graph, spans);
     return;
   }
@@ -965,6 +1007,23 @@ function renderMap(topology, spans) {
       <ol>${opList}</ol>
     </section>`;
   }).join("");
+}
+
+function loadP5() {
+  if (window.p5) return Promise.resolve();
+  if (state.p5Loading) return state.p5Loading;
+  state.p5Loading = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = p5ScriptPath;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => {
+      state.p5Loading = null;
+      reject(new Error("Could not load p5"));
+    };
+    document.head.append(script);
+  });
+  return state.p5Loading;
 }
 
 function clearRunOutput(message) {

@@ -641,7 +641,9 @@ function rawJsonState() {
   const value = editor?.getValue() || "";
   const gutter = raw.querySelector(".CodeMirror-gutters")?.getBoundingClientRect();
   const line = raw.querySelector(".CodeMirror-line")?.getBoundingClientRect();
-  const lineNumberNodes = Array.from(raw.querySelectorAll(".CodeMirror-linenumber")).slice(0, 20);
+  const lineNumberNodes = Array.from(raw.querySelectorAll(".CodeMirror-linenumber"))
+    .filter((lineNumber) => !lineNumber.closest(".CodeMirror-measure"))
+    .slice(0, 20);
   const lineNumbers = lineNumberNodes.map((line) => line.getBoundingClientRect());
   const escapedLineNumber = lineNumberNodes
     .map((line) => ({ text: line.textContent, rect: line.getBoundingClientRect() }))
