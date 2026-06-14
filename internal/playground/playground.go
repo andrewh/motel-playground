@@ -1468,13 +1468,14 @@ func emptyFallback(value, fallback string) string {
 }
 
 func shorten(value string, limit int) string {
-	if len(value) <= limit || limit <= 0 {
+	runes := []rune(value)
+	if len(runes) <= limit || limit <= 0 {
 		return value
 	}
 	if limit <= 3 {
-		return value[:limit]
+		return string(runes[:limit])
 	}
-	return value[:limit-3] + "..."
+	return string(runes[:limit-3]) + "..."
 }
 
 func sampleRates(traffic synth.TrafficPattern, scenarios []synth.Scenario, duration time.Duration) []rateSample {
