@@ -28,6 +28,11 @@ const payload = {
     duration: "2.5",
     seed: "314",
     maxNodes: "4",
+    signals: {
+      traces: true,
+      metrics: false,
+      logs: true,
+    },
   },
   filters: {
     result: "gateway",

@@ -54,6 +54,11 @@ const snapshot = createResultSnapshot({
     duration: 2.5,
     seed: 314,
     maxNodes: 4,
+    signals: {
+      traces: true,
+      metrics: false,
+      logs: true,
+    },
   },
   result,
   exportedAt: new Date("2026-06-14T20:50:27Z"),
@@ -68,6 +73,11 @@ assert.deepEqual(snapshot, {
     duration: "2.5",
     seed: "314",
     maxNodes: "4",
+    signals: {
+      traces: true,
+      metrics: false,
+      logs: true,
+    },
   },
   result,
 });
@@ -91,6 +101,11 @@ assert.deepEqual(minimalSnapshot.settings, {
   duration: "1",
   seed: "42",
   maxNodes: "8",
+  signals: {
+    traces: true,
+    metrics: true,
+    logs: true,
+  },
 });
 assert.deepEqual(minimalSnapshot.result.spans, []);
 assert.deepEqual(minimalSnapshot.result.metrics, []);

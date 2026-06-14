@@ -9,7 +9,7 @@ self.addEventListener("message", async (event) => {
 
   try {
     await loadRuntime();
-    const json = await self.motelRun(message.topology, message.duration, message.seed);
+    const json = await self.motelRun(message.topology, message.duration, message.seed, message.signals);
     self.postMessage({ id: message.id, ok: true, json });
   } catch (error) {
     self.postMessage({ id: message.id, ok: false, error: serializeError(error) });

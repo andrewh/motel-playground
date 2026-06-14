@@ -650,6 +650,42 @@ textarea {
   flex: 1 1 220px;
 }
 
+.signal-selector {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 208px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.signal-selector legend {
+  display: block;
+  margin: 0 0 var(--space-2);
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 620;
+  text-transform: uppercase;
+}
+
+.signal-selector label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+  color: var(--muted-strong);
+  font-size: 0.82rem;
+  font-weight: 560;
+  text-transform: none;
+}
+
+.signal-selector input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  accent-color: var(--ink);
+}
+
 .result-actions {
   display: grid;
   gap: var(--space-2);
@@ -1325,6 +1361,10 @@ pre {
   }
 
   .filter-field {
+    grid-column: 1 / -1;
+  }
+
+  .signal-selector {
     grid-column: 1 / -1;
   }
 

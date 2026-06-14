@@ -182,7 +182,14 @@ type RunResult struct {
 	Metrics  []MetricRecord   `json:"metrics,omitempty"`
 	Logs     []LogRecord      `json:"logs,omitempty"`
 	Errors   []Diagnostic     `json:"errors,omitempty"`
+	Signals  RunSignals       `json:"signals"`
 	Limits   RunLimits        `json:"limits"`
+}
+
+type RunSignals struct {
+	Traces  bool `json:"traces"`
+	Metrics bool `json:"metrics"`
+	Logs    bool `json:"logs"`
 }
 
 type RunLimits struct {
@@ -192,6 +199,14 @@ type RunLimits struct {
 	CapturedSpans    int     `json:"captured_spans"`
 	CapturedMetrics  int     `json:"captured_metrics"`
 	CapturedLogs     int     `json:"captured_logs"`
+}
+
+func DefaultRunSignals() RunSignals {
+	return RunSignals{
+		Traces:  true,
+		Metrics: true,
+		Logs:    true,
+	}
 }
 
 type captureObserver struct {
@@ -388,7 +403,7 @@ func Validate(source string) ValidationResult {
 	}
 }
 
-func Run(source string, duration time.Duration, seed uint64) RunResult {
+func Run(source string, duration time.Duration, seed uint64, signals RunSignals) RunResult {
 	if duration <= 0 {
 		duration = defaultDuration
 	}
@@ -399,51 +414,69 @@ func Run(source string, duration time.Duration, seed uint64) RunResult {
 	cfg, topo, scenarios, err := load(source)
 	if err != nil {
 		return RunResult{
-			OK:     false,
-			Errors: []Diagnostic{{Severity: "error", Message: err.Error()}},
-			Limits: limits(duration, 0, 0, 0),
+			OK:      false,
+			Errors:  []Diagnostic{{Severity: "error", Message: err.Error()}},
+			Signals: signals,
+			Limits:  limits(duration, 0, 0, 0),
 		}
 	}
 
 	traffic, err := synth.NewTrafficPattern(cfg.Traffic)
 	if err != nil {
 		return RunResult{
-			OK:     false,
-			Errors: []Diagnostic{{Severity: "error", Message: err.Error()}},
-			Limits: limits(duration, 0, 0, 0),
+			OK:      false,
+			Errors:  []Diagnostic{{Severity: "error", Message: err.Error()}},
+			Signals: signals,
+			Limits:  limits(duration, 0, 0, 0),
 		}
 	}
 
-	observer := &captureObserver{}
-	metricCapture := newMetricCapture(topo)
-	defer metricCapture.Shutdown()
-	metricObserver, err := synth.NewMetricObserver(metricCapture.Meters, topo, rand.New(rand.NewPCG(seed^0xa0761d6478bd642f, seed^0xe7037ed1a0b428db)))
-	if err != nil {
-		return RunResult{
-			OK:       false,
-			Topology: summariseConfig(cfg, topo),
-			Errors:   []Diagnostic{{Severity: "error", Message: err.Error()}},
-			Limits:   limits(duration, 0, 0, 0),
-		}
+	var observer *captureObserver
+	observers := make([]synth.SpanObserver, 0, 3)
+	if signals.Traces {
+		observer = &captureObserver{}
+		observers = append(observers, observer)
 	}
-	stopMetrics := metricObserver.Start()
-	metricsStopped := false
-	defer func() {
-		if !metricsStopped {
-			stopMetrics()
-		}
-	}()
 
-	logCapture := newLogCapture(topo)
-	defer logCapture.Shutdown()
-	logObserver, err := synth.NewLogObserver(logCapture.Loggers, topo, 0, rand.New(rand.NewPCG(seed^0x8ebc6af09c88c6e3, seed^0x589965cc75374cc3)))
-	if err != nil {
-		return RunResult{
-			OK:       false,
-			Topology: summariseConfig(cfg, topo),
-			Errors:   []Diagnostic{{Severity: "error", Message: err.Error()}},
-			Limits:   limits(duration, 0, 0, 0),
+	var metricCapture *metricCapture
+	var stopMetrics func()
+	if signals.Metrics {
+		metricCapture = newMetricCapture(topo)
+		defer metricCapture.Shutdown()
+		metricObserver, err := synth.NewMetricObserver(metricCapture.Meters, topo, rand.New(rand.NewPCG(seed^0xa0761d6478bd642f, seed^0xe7037ed1a0b428db)))
+		if err != nil {
+			return RunResult{
+				OK:       false,
+				Topology: summariseConfig(cfg, topo),
+				Errors:   []Diagnostic{{Severity: "error", Message: err.Error()}},
+				Signals:  signals,
+				Limits:   limits(duration, 0, 0, 0),
+			}
 		}
+		stopMetrics = metricObserver.Start()
+		observers = append(observers, metricObserver)
+		defer func() {
+			if stopMetrics != nil {
+				stopMetrics()
+			}
+		}()
+	}
+
+	var logCapture *logCapture
+	if signals.Logs {
+		logCapture = newLogCapture(topo)
+		defer logCapture.Shutdown()
+		logObserver, err := synth.NewLogObserver(logCapture.Loggers, topo, 0, rand.New(rand.NewPCG(seed^0x8ebc6af09c88c6e3, seed^0x589965cc75374cc3)))
+		if err != nil {
+			return RunResult{
+				OK:       false,
+				Topology: summariseConfig(cfg, topo),
+				Errors:   []Diagnostic{{Severity: "error", Message: err.Error()}},
+				Signals:  signals,
+				Limits:   limits(duration, 0, 0, 0),
+			}
+		}
+		observers = append(observers, logObserver)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), duration+2*time.Second)
@@ -459,7 +492,7 @@ func Run(source string, duration time.Duration, seed uint64) RunResult {
 		Tracers:          func(serviceName string) trace.Tracer { return tracerProvider.Tracer(serviceName) },
 		Rng:              rng,
 		Duration:         duration,
-		Observers:        []synth.SpanObserver{observer, metricObserver, logObserver},
+		Observers:        observers,
 		MaxSpansPerTrace: maxSpansPerTrace,
 		MaxTraces:        maxTraces,
 		State:            synth.NewSimulationState(topo),
@@ -472,15 +505,25 @@ func Run(source string, duration time.Duration, seed uint64) RunResult {
 			OK:       false,
 			Topology: summariseConfig(cfg, topo),
 			Errors:   []Diagnostic{{Severity: "error", Message: err.Error()}},
+			Signals:  signals,
 			Limits:   limits(duration, 0, 0, 0),
 		}
 	}
 
-	spans := observer.Records()
-	stopMetrics()
-	metricsStopped = true
-	metrics := metricCapture.Records()
-	logs := logCapture.Records()
+	var spans []SpanRecord
+	if observer != nil {
+		spans = observer.Records()
+	}
+	var metrics []MetricRecord
+	if metricCapture != nil {
+		stopMetrics()
+		stopMetrics = nil
+		metrics = metricCapture.Records()
+	}
+	var logs []LogRecord
+	if logCapture != nil {
+		logs = logCapture.Records()
+	}
 	return RunResult{
 		OK:       true,
 		Stats:    stats,
@@ -488,6 +531,7 @@ func Run(source string, duration time.Duration, seed uint64) RunResult {
 		Spans:    spans,
 		Metrics:  metrics,
 		Logs:     logs,
+		Signals:  signals,
 		Limits:   limits(duration, len(spans), len(metrics), len(logs)),
 	}
 }

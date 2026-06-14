@@ -72,6 +72,21 @@
               Seed
               <input id="seed" type="number" min="1" value="42" />
             </label>
+            <fieldset class="signal-selector">
+              <legend>Signals</legend>
+              <label>
+                <input id="run-signal-traces" type="checkbox" checked />
+                Traces
+              </label>
+              <label>
+                <input id="run-signal-metrics" type="checkbox" checked />
+                Metrics
+              </label>
+              <label>
+                <input id="run-signal-logs" type="checkbox" checked />
+                Logs
+              </label>
+            </fieldset>
             <label class="filter-field">
               Filter output
               <input id="result-filter" type="search" autocomplete="off" placeholder="service, attribute, trace" aria-keyshortcuts="Meta+K Control+K /" />
