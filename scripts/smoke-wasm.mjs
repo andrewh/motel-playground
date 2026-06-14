@@ -123,8 +123,13 @@ if (!fractionalRun.ok || Math.abs(fractionalRun.limits.duration_seconds - 0.5) >
 
 for (const seed of [1, 42, 777, 2026]) {
   const generated = randomTopologyYaml(seed);
-  if (!generated.includes("pattern:") || !generated.includes("    traffic:")) {
-    throw new Error(`generated topology ${seed} did not include rich traffic syntax:\n${generated}`);
+  if (
+    !generated.includes("pattern:")
+    || !generated.includes("    traffic:")
+    || !generated.includes("    metrics:")
+    || !generated.includes("    logs:")
+  ) {
+    throw new Error(`generated topology ${seed} did not include rich traffic and signal syntax:\n${generated}`);
   }
   const generatedValidation = JSON.parse(await globalThis.motelValidate(generated));
   if (!generatedValidation.ok) {
@@ -137,6 +142,12 @@ for (const seed of [1, 42, 777, 2026]) {
   const generatedRun = JSON.parse(await globalThis.motelRun(generated, 1, seed));
   if (!generatedRun.ok || generatedRun.stats.traces < 1 || generatedRun.spans.length < 1) {
     throw new Error(`generated topology ${seed} did not run: ${JSON.stringify(generatedRun)}`);
+  }
+  if (!generatedRun.metrics?.length) {
+    throw new Error(`generated topology ${seed} did not emit metrics: ${JSON.stringify(generatedRun)}`);
+  }
+  if (!generatedRun.logs?.length) {
+    throw new Error(`generated topology ${seed} did not emit logs: ${JSON.stringify(generatedRun)}`);
   }
 
   const capped = randomTopologyYaml(seed, { maxNodes: 3 });
