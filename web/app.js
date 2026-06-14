@@ -5,6 +5,13 @@ import {
   isShareURLTooLarge,
   makeShareURL,
 } from "./share-state.mjs";
+import {
+  createResultSnapshot,
+  normalizeResultSnapshot,
+  parseResultSnapshot,
+  resultSnapshotFilename,
+  resultSnapshotMimeType,
+} from "./result-snapshot.mjs";
 
 const sampleTopology = `# Five-service topology demonstrating motel capabilities
 version: 1
@@ -85,10 +92,21 @@ scenarios:
 `;
 
 const p5ScriptPath = "./vendor/p5/p5.min.js";
+const reportHashLength = 12;
+const reportMapCellHeight = 116;
+const reportMapCellWidth = 190;
+const reportMapEdgeBaseWidth = 1.2;
+const reportMapEdgeMaxBoost = 3;
+const reportMapNodeHeight = 48;
+const reportMapNodeLabelLength = 24;
+const reportMapNodeWidth = 132;
+const reportMapPadding = 48;
+const reportTableRowLimit = 80;
 
 const state = {
   ready: false,
   lastRun: null,
+  lastRunSource: null,
   currentTopology: null,
   errorTracesOnly: false,
   warnLogsOnly: false,
@@ -131,6 +149,10 @@ const els = {
   load: document.querySelector("#load-button"),
   save: document.querySelector("#save-button"),
   share: document.querySelector("#share-button"),
+  resultFile: document.querySelector("#result-file"),
+  importResults: document.querySelector("#import-results-button"),
+  exportResults: document.querySelector("#export-results-button"),
+  printReport: document.querySelector("#print-report-button"),
   generate: document.querySelector("#generate-button"),
   validate: document.querySelector("#validate-button"),
   run: document.querySelector("#run-button"),
@@ -150,6 +172,7 @@ const els = {
   raw: document.querySelector("#raw-output"),
   summary: document.querySelector("#summary-line"),
   shareStatus: document.querySelector("#share-status"),
+  report: document.querySelector("#print-report"),
   metrics: {
     traces: document.querySelector("#metric-traces"),
     spans: document.querySelector("#metric-spans"),
@@ -203,7 +226,13 @@ els.save.addEventListener("click", () => saveTopology());
 els.share.addEventListener("click", () => {
   void copyShareURL();
 });
+els.importResults.addEventListener("click", () => els.resultFile.click());
+els.exportResults.addEventListener("click", () => exportResults());
+els.printReport.addEventListener("click", () => printReport());
 els.file.addEventListener("change", () => loadTopologyFile());
+els.resultFile.addEventListener("change", () => {
+  void loadResultsFile();
+});
 els.errorFilter.addEventListener("click", () => {
   state.errorTracesOnly = !state.errorTracesOnly;
   renderSpans(state.lastRun?.spans ?? []);
@@ -230,6 +259,11 @@ els.editor.addEventListener("input", () => {
 });
 window.addEventListener("hashchange", () => {
   void restoreShareStateFromURL();
+});
+window.addEventListener("beforeprint", () => {
+  if (!state.lastRun) return;
+  renderPrintableReport(makeCurrentResultSnapshot());
+  document.body.classList.add("report-ready");
 });
 
 void restoreShareStateFromURL();
@@ -387,6 +421,8 @@ function initEditors() {
     setTopology: (value) => setTopologyValue(value),
     getShareURL: () => buildShareURL().href,
     restoreShareState: () => restoreShareStateFromURL(),
+    createResultSnapshot: () => makeCurrentResultSnapshot(),
+    importResultSnapshot: (snapshot) => applyResultSnapshot(normalizeResultSnapshot(snapshot)),
   };
 }
 
@@ -601,17 +637,19 @@ async function run() {
   if (!state.ready || state.runBusy) return;
   const runID = state.activeRunID + 1;
   const editorRevision = state.editorRevision;
+  const topology = getTopologyValue();
+  const settings = currentRunSettings();
   state.activeRunID = runID;
   setRunBusy(true, "Running topology in background");
   setValidateButton("Validate");
   try {
     const result = JSON.parse(await runClient().run({
-      topology: getTopologyValue(),
+      topology,
       duration: Number(els.duration.value),
       seed: Number(els.seed.value),
     }));
     if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
-    renderRun(result);
+    renderRun(result, { topology, settings });
     renderRawJson(result);
   } catch (error) {
     if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
@@ -679,22 +717,312 @@ async function loadTopologyFile() {
 }
 
 function saveTopology() {
-  const blob = new Blob([getTopologyValue()], { type: "text/yaml" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = topologyFilename();
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  const filename = topologyFilename();
+  downloadText(getTopologyValue(), { filename, type: "text/yaml" });
   els.summary.classList.remove("bad");
-  els.summary.textContent = `Saved ${link.download}`;
+  els.summary.textContent = `Saved ${filename}`;
 }
 
 function topologyFilename() {
   const seed = Math.max(1, Math.floor(Number(els.seed.value) || Date.now()));
   return `motel-topology-${seed}.yaml`;
+}
+
+function exportResults() {
+  if (!state.lastRun) {
+    setShareStatus("Run results are not available.", "bad");
+    return;
+  }
+  const snapshot = makeCurrentResultSnapshot();
+  const filename = resultSnapshotFilename(snapshot.settings);
+  downloadText(`${JSON.stringify(snapshot, null, 2)}\n`, {
+    filename,
+    type: resultSnapshotMimeType,
+  });
+  setShareStatus(`Exported ${filename}`, "good");
+}
+
+function printReport() {
+  if (!state.lastRun) {
+    setShareStatus("Run results are not available.", "bad");
+    return;
+  }
+  renderPrintableReport(makeCurrentResultSnapshot());
+  document.body.classList.add("report-ready");
+  setShareStatus("Report ready for print", "good");
+  window.print();
+}
+
+async function loadResultsFile() {
+  const [file] = els.resultFile.files ?? [];
+  if (!file) return;
+  try {
+    const snapshot = parseResultSnapshot(await file.text());
+    await applyResultSnapshot(snapshot);
+    setShareStatus(`Imported ${file.name}`, "good");
+  } catch (error) {
+    setShareStatus(`Could not import results: ${error.message}`, "bad");
+  } finally {
+    els.resultFile.value = "";
+  }
+}
+
+function makeCurrentResultSnapshot() {
+  return createResultSnapshot({
+    topology: state.lastRunSource?.topology ?? getTopologyValue(),
+    settings: state.lastRunSource?.settings ?? currentRunSettings(),
+    result: state.lastRun,
+  });
+}
+
+async function applyResultSnapshot(snapshot) {
+  setTopologyValue(snapshot.topology);
+  applyNumberInput(els.duration, snapshot.settings.duration);
+  applyNumberInput(els.seed, snapshot.settings.seed);
+  applyNumberInput(els.maxNodes, snapshot.settings.maxNodes);
+  els.resultFilter.value = "";
+  state.resultFilter = "";
+  state.errorTracesOnly = false;
+  state.warnLogsOnly = false;
+  setValidateButton("Validate");
+  renderRun(snapshot.result, {
+    topology: snapshot.topology,
+    settings: snapshot.settings,
+  });
+  renderRawJson(snapshot.result);
+  if (state.ready) {
+    await renderPreview();
+  }
+  const stats = snapshot.result.stats;
+  els.summary.classList.add("good");
+  els.summary.classList.remove("bad");
+  els.summary.textContent = `Imported run: ${stats.traces} traces, ${stats.spans} spans, ${stats.errors} errors`;
+}
+
+function currentRunSettings() {
+  return {
+    duration: els.duration.value,
+    seed: els.seed.value,
+    maxNodes: els.maxNodes.value,
+  };
+}
+
+function downloadText(value, { filename, type }) {
+  downloadBlob(new Blob([value], { type }), filename);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function renderPrintableReport(snapshot) {
+  const result = snapshot.result;
+  const stats = result.stats;
+  const topology = result.topology;
+  const generatedAt = snapshot.exported_at
+    ? new Date(snapshot.exported_at)
+    : new Date();
+  els.report.innerHTML = `<article class="report-document">
+    <header class="report-header">
+      <div>
+        <p class="report-kicker">motel playground</p>
+        <h1>Topology report</h1>
+      </div>
+      <dl class="report-meta">
+        <div><dt>Generated</dt><dd>${escapeHtml(reportDate(generatedAt))}</dd></div>
+        <div><dt>Duration</dt><dd>${escapeHtml(snapshot.settings.duration)}s</dd></div>
+        <div><dt>Seed</dt><dd>${escapeHtml(snapshot.settings.seed)}</dd></div>
+      </dl>
+    </header>
+    ${reportSection("Run summary", renderReportFacts([
+      ["traces", stats.traces],
+      ["spans", stats.spans],
+      ["span errors", `${stats.errors} (${formatPercent(stats.error_rate)})`],
+      ["elapsed", `${formatNumber(stats.elapsed_ms)}ms`],
+      ["services", topology.services.length],
+      ["operations", topology.operations],
+    ]))}
+    ${reportSection("Topology map", renderReportMap(topology), "report-map-section")}
+    ${reportSection("Run parameters", renderReportFacts([
+      ["duration", `${snapshot.settings.duration}s`],
+      ["seed", snapshot.settings.seed],
+      ["max nodes", snapshot.settings.maxNodes],
+      ["captured spans", result.limits.captured_spans],
+      ["captured metrics", result.limits.captured_metrics],
+      ["captured logs", result.limits.captured_logs],
+    ]))}
+    ${reportSection("Traffic", renderReportTraffic(topology))}
+    ${reportSection("Warnings and errors", renderReportWarnings(result))}
+    ${reportSection("Metrics", renderReportMetrics(result.metrics ?? []), "report-wide-section")}
+    ${reportSection("Logs", renderReportLogs(result.logs ?? []), "report-wide-section")}
+    ${reportSection("Trace summaries", renderReportTraces(result.spans ?? []), "report-wide-section")}
+    ${reportSection("Topology configuration", `<pre class="report-code">${escapeHtml(snapshot.topology)}</pre>`, "report-wide-section")}
+  </article>`;
+}
+
+function reportSection(title, body, className = "") {
+  return `<section class="report-section ${className}">
+    <h2>${escapeHtml(title)}</h2>
+    ${body}
+  </section>`;
+}
+
+function renderReportFacts(items) {
+  return `<dl class="report-facts">
+    ${items.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
+  </dl>`;
+}
+
+function renderReportMap(topology) {
+  const graph = topology.graph;
+  if (!graph?.nodes?.length) {
+    return `<p class="report-empty">No topology map available.</p>`;
+  }
+  const cols = Math.max(graph.gridCols || 1, ...graph.nodes.map((node) => node.col + 1));
+  const rows = Math.max(graph.gridRows || 1, ...graph.nodes.map((node) => node.row + 1));
+  const width = (reportMapPadding * 2) + reportMapNodeWidth + ((cols - 1) * reportMapCellWidth);
+  const height = (reportMapPadding * 2) + reportMapNodeHeight + ((rows - 1) * reportMapCellHeight);
+  const positions = new Map(graph.nodes.map((node) => [node.id, {
+    x: reportMapPadding + (node.col * reportMapCellWidth),
+    y: reportMapPadding + (node.row * reportMapCellHeight),
+  }]));
+  const edges = (graph.edges ?? []).flatMap((edge) => {
+    const source = positions.get(edge.source);
+    const target = positions.get(edge.target);
+    if (!source || !target) return [];
+    const x1 = source.x + (reportMapNodeWidth / 2);
+    const y1 = source.y + (reportMapNodeHeight / 2);
+    const x2 = target.x + (reportMapNodeWidth / 2);
+    const y2 = target.y + (reportMapNodeHeight / 2);
+    const strokeWidth = reportMapEdgeBaseWidth + Math.min(reportMapEdgeMaxBoost, Number(edge.weight) || 0);
+    return [`<line x1="${formatSVGNumber(x1)}" y1="${formatSVGNumber(y1)}" x2="${formatSVGNumber(x2)}" y2="${formatSVGNumber(y2)}" stroke-width="${formatSVGNumber(strokeWidth)}" marker-end="url(#report-arrow)" class="${edge.async ? "report-edge report-edge-async" : "report-edge"}"></line>`];
+  }).join("");
+  const nodes = graph.nodes.map((node) => {
+    const point = positions.get(node.id);
+    const label = shortLabel(node.id, reportMapNodeLabelLength);
+    const operations = `${node.operations?.length ?? 0} operations`;
+    return `<g class="${node.isRoot ? "report-node report-node-root" : "report-node"}" transform="translate(${formatSVGNumber(point.x)} ${formatSVGNumber(point.y)})">
+      <rect width="${reportMapNodeWidth}" height="${reportMapNodeHeight}" rx="6"></rect>
+      <text x="12" y="20">${escapeHtml(label)}</text>
+      <text x="12" y="36" class="report-node-detail">${escapeHtml(operations)}</text>
+      <title>${escapeHtml(node.id)}</title>
+    </g>`;
+  }).join("");
+  return `<svg class="report-map" viewBox="0 0 ${formatSVGNumber(width)} ${formatSVGNumber(height)}" role="img" aria-label="Topology visualization">
+    <defs>
+      <marker id="report-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z"></path>
+      </marker>
+    </defs>
+    ${edges}
+    ${nodes}
+  </svg>`;
+}
+
+function renderReportTraffic(topology) {
+  const roots = topology.roots?.length
+    ? `<ul class="report-list">${topology.roots.map((root) => `<li>${escapeHtml(root)}</li>`).join("")}</ul>`
+    : `<p class="report-empty">No root operations identified.</p>`;
+  const edgeRows = (topology.graph?.edges ?? []).map((edge) => [
+    `${edge.source} -> ${edge.target}`,
+    `${edge.calls?.length ?? 0} call paths`,
+    edge.async ? "async" : "sync",
+  ]);
+  return `<div class="report-grid">
+    <div><h3>Root operations</h3>${roots}</div>
+    <div><h3>Service calls</h3>${renderReportTable(["edge", "paths", "style"], edgeRows, "No service calls captured.")}</div>
+  </div>`;
+}
+
+function renderReportWarnings(result) {
+  const errorSpanRows = (result.spans ?? [])
+    .filter((span) => span.is_error)
+    .map((span) => ["span", `${span.service}.${span.operation}`, `${formatNumber(span.duration_ms)}ms`, shortHash(span.trace_id)]);
+  const notableLogRows = (result.logs ?? [])
+    .filter(isNotableLog)
+    .map((log) => [log.severity || "WARN", signalContext(log), log.body || "(empty log)", signalTime(log.timestamp_ms)]);
+  const rows = [...errorSpanRows, ...notableLogRows];
+  return renderReportTable(["kind", "source", "detail", "time or trace"], rows, "No span errors or warning logs captured.");
+}
+
+function renderReportMetrics(metrics) {
+  const rows = metrics.map((metric) => [
+    metric.name,
+    signalContext(metric),
+    metric.type || "metric",
+    metricValue(metric),
+  ]);
+  return renderReportTable(["metric", "source", "type", "value"], rows, "No metrics captured.");
+}
+
+function renderReportLogs(logs) {
+  const rows = logs.map((log) => [
+    log.severity || "INFO",
+    signalContext(log),
+    log.body || "(empty log)",
+    signalTime(log.timestamp_ms),
+  ]);
+  return renderReportTable(["severity", "source", "body", "time"], rows, "No logs captured.");
+}
+
+function renderReportTraces(spans) {
+  if (!spans.length) {
+    return renderReportTable(["trace", "root", "spans", "errors", "duration"], [], "No spans captured.");
+  }
+  const traces = groupSpansByTrace(spans.slice().sort(compareSpans));
+  const rows = traces.map((trace) => [
+    shortHash(trace.id),
+    `${trace.root.service}.${trace.root.operation}`,
+    trace.spans.length,
+    trace.errors,
+    `${formatNumber(trace.duration)}ms`,
+  ]);
+  return renderReportTable(["trace", "root", "spans", "errors", "duration"], rows, "No spans captured.");
+}
+
+function renderReportTable(headers, rows, emptyMessage) {
+  if (!rows.length) {
+    return `<p class="report-empty">${escapeHtml(emptyMessage)}</p>`;
+  }
+  const visibleRows = rows.slice(0, reportTableRowLimit);
+  const table = `<table class="report-table">
+    <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+    <tbody>
+      ${visibleRows.map((row) => `<tr>${row.map((value) => `<td>${escapeHtml(value)}</td>`).join("")}</tr>`).join("")}
+    </tbody>
+  </table>`;
+  if (rows.length <= reportTableRowLimit) return table;
+  return `${table}<p class="report-note">Showing ${reportTableRowLimit} of ${rows.length} captured rows.</p>`;
+}
+
+function reportDate(value) {
+  if (!(value instanceof Date) || Number.isNaN(value.valueOf())) return "unknown";
+  return value.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function formatPercent(value) {
+  return `${Math.round(Number(value || 0) * 1000) / 10}%`;
+}
+
+function shortHash(value) {
+  const text = String(value || "synthetic");
+  return text.length > reportHashLength ? text.slice(0, reportHashLength) : text;
+}
+
+function shortLabel(value, maxLength) {
+  const text = String(value || "");
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function formatSVGNumber(value) {
+  return Number(value).toFixed(2).replace(/\.?0+$/, "");
 }
 
 async function renderPreview() {
@@ -733,9 +1061,10 @@ function renderValidation(result) {
   return true;
 }
 
-function renderRun(result) {
+function renderRun(result, source = { topology: getTopologyValue(), settings: currentRunSettings() }) {
   if (!result.ok) {
     state.lastRun = null;
+    state.lastRunSource = null;
     state.currentTopology = null;
     clearPreview("Fix the run error to preview traffic.");
     clearRunOutput(emptyCopy.runFailedSpans);
@@ -744,10 +1073,12 @@ function renderRun(result) {
     els.summary.textContent = result.errors?.[0]?.message ?? "Run failed";
     els.summary.classList.remove("good");
     els.summary.classList.add("bad");
+    syncControls();
     return;
   }
   const stats = result.stats;
   state.lastRun = result;
+  state.lastRunSource = source;
   state.currentTopology = result.topology;
   els.metrics.traces.textContent = stats.traces;
   els.metrics.spans.textContent = stats.spans;
@@ -760,10 +1091,12 @@ function renderRun(result) {
   renderMetrics(result.metrics ?? []);
   renderLogs(result.logs ?? []);
   renderMap(result.topology, result.spans ?? []);
+  syncControls();
 }
 
 function renderRunWorkerError(error) {
   state.lastRun = null;
+  state.lastRunSource = null;
   state.currentTopology = null;
   clearPreview("Fix the run error to preview traffic.");
   clearRunOutput(emptyCopy.runFailedSpans);
@@ -773,6 +1106,7 @@ function renderRunWorkerError(error) {
   els.summary.classList.remove("good");
   els.summary.classList.add("bad");
   renderRawText(String(error?.stack || error?.message || error));
+  syncControls();
 }
 
 function renderMetrics(metrics) {
@@ -1162,6 +1496,7 @@ function loadP5() {
 
 function clearRunOutput(message) {
   state.lastRun = null;
+  state.lastRunSource = null;
   state.errorTracesOnly = false;
   state.warnLogsOnly = false;
   syncSpanFilter(0, 0);
@@ -1170,6 +1505,7 @@ function clearRunOutput(message) {
   els.metrics.spans.textContent = "0";
   els.metrics.errors.textContent = "0%";
   els.traces.innerHTML = `<p class="empty">${escapeHtml(message)}</p>`;
+  syncControls();
 }
 
 function clearSignalOutput(metricMessage = emptyCopy.metrics, logMessage = emptyCopy.logs) {
@@ -1368,6 +1704,9 @@ function syncControls(label) {
   els.load.disabled = state.runtimeBusy;
   els.save.disabled = state.runtimeBusy;
   els.generate.disabled = state.runtimeBusy;
+  els.importResults.disabled = state.runtimeBusy || !state.ready;
+  els.exportResults.disabled = state.runtimeBusy || !state.lastRun;
+  els.printReport.disabled = state.runtimeBusy || !state.lastRun;
   els.validate.disabled = state.runtimeBusy || !state.ready;
   els.run.disabled = state.runtimeBusy || state.runBusy || !state.ready;
 }

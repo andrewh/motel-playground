@@ -10,6 +10,11 @@ import { setTimeout as delay } from "node:timers/promises";
 
 const webRoot = fileURLToPath(new URL("../web/", import.meta.url));
 const pagesBasePath = "/motel-playground/";
+const a4PaperHeightInches = 11.69;
+const a4PaperWidthInches = 8.27;
+const letterPaperHeightInches = 11;
+const letterPaperWidthInches = 8.5;
+const minReportPDFBase64Length = 6000;
 const oversizedTopologyPaddingLength = 9000;
 const invalidTopology = "version: 1\nservices: [\n";
 const oversizedTopology = `version: 1\n# ${"x".repeat(oversizedTopologyPaddingLength)}\nservices: {}\n`;
@@ -335,6 +340,85 @@ try {
   }
   await dispatchShortcut(client, { key: "q", ctrlKey: true, selector: "#raw-output .CodeMirror textarea" });
   await evaluate(client, `document.querySelector("[data-view='metrics']").click()`);
+  await evaluate(client, `(${installResultDownloadSpy})()`);
+  await evaluate(client, `document.querySelector("#export-results-button").click()`);
+  const exportedResults = await waitFor(async () => {
+    const state = await evaluate(client, `(${resultDownloadState})()`);
+    return state.ready ? state : false;
+  }, "result JSON exported");
+  if (
+    exportedResults.kind !== "motel-playground-run"
+    || exportedResults.seed !== "42"
+    || exportedResults.traces < 1
+    || exportedResults.spans < 1
+    || exportedResults.metrics < 1
+    || exportedResults.logs < 1
+    || !exportedResults.topology.includes("gateway.request.duration")
+  ) {
+    throw new Error(`result export did not include the full run: ${JSON.stringify(exportedResults)}`);
+  }
+  if (!exportedResults.download.endsWith(".json") || !exportedResults.status.includes("Exported")) {
+    throw new Error(`result export did not expose a JSON download: ${JSON.stringify(exportedResults)}`);
+  }
+
+  await client.send("Page.navigate", { url: appURL });
+  await waitFor(async () => evaluate(client, `document.querySelector("#runtime-status")?.textContent === "Runtime ready"`), "runtime ready after result import reload");
+  await importResultFile(client, exportedResults.text);
+  const importedResults = await waitFor(async () => {
+    const state = await evaluate(client, `(${resultImportState})()`);
+    return state.ready ? state : false;
+  }, "result JSON imported");
+  if (
+    !importedResults.topologyRestored
+    || importedResults.duration !== "1"
+    || importedResults.seed !== "42"
+    || importedResults.traces < 1
+    || importedResults.metrics < 1
+    || importedResults.logs < 1
+    || importedResults.exportDisabled
+  ) {
+    throw new Error(`result import did not restore the run: ${JSON.stringify(importedResults)}`);
+  }
+  await evaluate(client, `document.querySelector("[data-view='raw']").click()`);
+  const importedRaw = await waitFor(async () => {
+    const state = await evaluate(client, `(${rawJsonState})()`);
+    return state.validJson && state.hasRunKeys ? state : false;
+  }, "imported raw JSON rendered");
+  if (!importedRaw.formatted) {
+    throw new Error(`imported raw JSON was not formatted: ${JSON.stringify(importedRaw)}`);
+  }
+  await evaluate(client, `(${installPrintSpy})()`);
+  await evaluate(client, `document.querySelector("#print-report-button").click()`);
+  const reportState = await waitFor(async () => {
+    const state = await evaluate(client, `(${printReportState})()`);
+    return state.ready ? state : false;
+  }, "printable report generated");
+  if (
+    !reportState.reportReady
+    || reportState.prints !== 1
+    || reportState.nodes < 2
+    || reportState.tables < 4
+    || reportState.interactiveControls !== 0
+    || !reportState.sections.includes("Topology map")
+    || !reportState.sections.includes("Topology configuration")
+    || !reportState.text.includes("gateway.request.duration")
+    || !reportState.text.includes("gateway handled")
+  ) {
+    throw new Error(`printable report is incomplete: ${JSON.stringify(reportState)}`);
+  }
+  const a4Report = await client.send("Page.printToPDF", {
+    paperHeight: a4PaperHeightInches,
+    paperWidth: a4PaperWidthInches,
+    printBackground: true,
+  });
+  const letterReport = await client.send("Page.printToPDF", {
+    paperHeight: letterPaperHeightInches,
+    paperWidth: letterPaperWidthInches,
+    printBackground: true,
+  });
+  assertReportPDF("A4", a4Report);
+  assertReportPDF("Letter", letterReport);
+  await evaluate(client, `document.querySelector("[data-view='metrics']").click()`);
   const metricState = await waitFor(async () => {
     const state = await evaluate(client, `(${signalTabState})("metrics")`);
     return state.rows > 0 && state.text.includes("gateway.request.duration") ? state : false;
@@ -579,6 +663,19 @@ async function setResultFilter(client, value) {
   `);
 }
 
+async function importResultFile(client, text) {
+  await evaluate(client, `
+    (() => {
+      const input = document.querySelector("#result-file");
+      const file = new File([${JSON.stringify(text)}], "shared-results.json", { type: "application/json" });
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    })()
+  `);
+}
+
 async function dispatchShortcut(client, { key, ctrlKey = false, metaKey = false, shiftKey = false, altKey = false, selector = "document" }) {
   await evaluate(client, `
     (() => {
@@ -681,6 +778,85 @@ function oversizedShareState() {
   return {
     status,
     tooLarge: status.includes("too large"),
+  };
+}
+
+function installResultDownloadSpy() {
+  window.__resultDownload = {};
+  URL.createObjectURL = (blob) => {
+    window.__resultDownload.blob = blob;
+    return "blob:motel-results";
+  };
+  URL.revokeObjectURL = () => {};
+  HTMLAnchorElement.prototype.click = function () {
+    if (this.download?.endsWith(".json")) {
+      window.__resultDownload.download = this.download;
+      window.__resultDownload.href = this.href;
+    }
+  };
+}
+
+async function resultDownloadState() {
+  const blob = window.__resultDownload?.blob;
+  let text = "";
+  let json = null;
+  if (blob) {
+    text = await blob.text();
+    try {
+      json = JSON.parse(text);
+    } catch {
+    }
+  }
+  return {
+    ready: Boolean(json),
+    text,
+    kind: json?.kind,
+    seed: json?.settings?.seed,
+    topology: json?.topology || "",
+    traces: json?.result?.stats?.traces ?? 0,
+    spans: json?.result?.stats?.spans ?? 0,
+    metrics: json?.result?.metrics?.length ?? 0,
+    logs: json?.result?.logs?.length ?? 0,
+    download: window.__resultDownload?.download || "",
+    status: document.querySelector("#share-status").textContent,
+  };
+}
+
+function resultImportState() {
+  return {
+    ready: document.querySelector("#share-status").textContent.includes("Imported")
+      && document.querySelector("#summary-line").textContent.includes("Imported run"),
+    topologyRestored: window.motelPlayground?.getTopology().includes("gateway.request.duration"),
+    duration: document.querySelector("#duration").value,
+    seed: document.querySelector("#seed").value,
+    traces: Number(document.querySelector("#metric-traces").textContent),
+    spans: Number(document.querySelector("#metric-spans").textContent),
+    metrics: document.querySelectorAll("#signal-metrics .signal-item").length,
+    logs: document.querySelectorAll("#signal-logs .signal-item").length,
+    exportDisabled: document.querySelector("#export-results-button").disabled,
+    status: document.querySelector("#share-status").textContent,
+    summary: document.querySelector("#summary-line").textContent,
+  };
+}
+
+function installPrintSpy() {
+  window.__printCount = 0;
+  window.print = () => {
+    window.__printCount += 1;
+  };
+}
+
+function printReportState() {
+  const report = document.querySelector("#print-report");
+  return {
+    ready: window.__printCount > 0 && report.textContent.includes("Topology report"),
+    reportReady: document.body.classList.contains("report-ready"),
+    prints: window.__printCount,
+    nodes: report.querySelectorAll(".report-node").length,
+    tables: report.querySelectorAll(".report-table").length,
+    interactiveControls: report.querySelectorAll("button, input, textarea, select, .tab, .CodeMirror").length,
+    sections: Array.from(report.querySelectorAll(".report-section h2")).map((heading) => heading.textContent),
+    text: report.textContent,
   };
 }
 
@@ -818,6 +994,12 @@ function runControlState() {
     validateDisabled: document.querySelector("#validate-button").disabled,
     runDisabled: document.querySelector("#run-button").disabled,
   };
+}
+
+function assertReportPDF(label, pdf) {
+  if (!pdf?.data || pdf.data.length < minReportPDFBase64Length) {
+    throw new Error(`${label} report PDF was too small: ${pdf?.data?.length ?? 0}`);
+  }
 }
 
 function invalidValidationState() {
