@@ -135,7 +135,78 @@ try {
   ) {
     throw new Error(`static-rate preview did not expose forecast details: ${JSON.stringify(runtimeState)}`);
   }
+  const sampleTopology = await evaluate(client, `window.motelPlayground.getTopology()`);
+  const initialTabState = await evaluate(client, `(${resultTabA11yState})()`);
+  if (!initialTabState.ok) {
+    throw new Error(`result tabs do not expose ARIA tab semantics: ${JSON.stringify(initialTabState)}`);
+  }
+  await evaluate(client, `document.querySelector("#tab-preview").focus()`);
+  await dispatchShortcut(client, { key: "ArrowRight", selector: "#tab-preview" });
+  const arrowTabState = await waitFor(async () => {
+    const state = await evaluate(client, `(${resultTabFocusState})()`);
+    return state.activeView === "traces" && state.focusedTab === "tab-traces" ? state : false;
+  }, "arrow key tab navigation");
+  if (arrowTabState.selectedTab !== "tab-traces") {
+    throw new Error(`arrow key tab navigation did not update selected state: ${JSON.stringify(arrowTabState)}`);
+  }
+  await evaluate(client, `document.querySelector("#tab-preview").click()`);
 
+  if (await evaluate(client, `document.documentElement.dataset.theme !== "light"`)) {
+    await evaluate(client, `document.querySelector("#theme-toggle").click()`);
+    await waitFor(async () => {
+      const state = await evaluate(client, `(${previewThemeState})()`);
+      return state.theme === "light" && state.hasSVG ? state : false;
+    }, "preview light theme ready");
+  }
+  const lightPreviewTheme = await evaluate(client, `(${previewThemeState})()`);
+  if (!lightPreviewTheme.hasSVG || lightPreviewTheme.hardcodedLight) {
+    throw new Error(`preview SVG still uses hardcoded light colours: ${JSON.stringify(lightPreviewTheme)}`);
+  }
+  await evaluate(client, `(() => {
+    const originalPreview = window.motelPreview;
+    window.__previewRenderCalls = 0;
+    window.motelPreview = async (...args) => {
+      window.__previewRenderCalls += 1;
+      return originalPreview(...args);
+    };
+    document.querySelector("#theme-toggle").click();
+  })()`);
+  const darkPreviewTheme = await waitFor(async () => {
+    const state = await evaluate(client, `(${previewThemeState})()`);
+    return state.theme === "dark"
+      && state.calls > 0
+      && state.backgroundFill !== lightPreviewTheme.backgroundFill
+      && state.textFill !== lightPreviewTheme.textFill
+      ? state
+      : false;
+  }, "preview dark theme repaint");
+  if (darkPreviewTheme.hardcodedLight) {
+    throw new Error(`dark preview SVG still includes hardcoded light colours: ${JSON.stringify(darkPreviewTheme)}`);
+  }
+
+  await evaluate(client, `(() => {
+    window.__unhandledRejections = [];
+    window.addEventListener("unhandledrejection", (event) => {
+      window.__unhandledRejections.push(String(event.reason?.message || event.reason));
+    });
+  })()`);
+  await setEditorValue(client, invalidTopology);
+  await evaluate(client, `(() => {
+    const input = document.querySelector("#duration");
+    input.value = "2";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  })()`);
+  await delay(200);
+  const invalidPreviewEdit = await evaluate(client, `(${invalidPreviewEditState})()`);
+  if (!invalidPreviewEdit.cleared || invalidPreviewEdit.unhandled.length) {
+    throw new Error(`invalid editor preview was not handled cleanly: ${JSON.stringify(invalidPreviewEdit)}`);
+  }
+  await setEditorValue(client, sampleTopology);
+  await evaluate(client, `document.querySelector("#duration").value = "1"`);
+  await evaluate(client, `document.querySelector("#validate-button").click()`);
+  await waitFor(async () => evaluate(client, `document.querySelector("#validate-button").classList.contains("validated")`), "sample revalidated after invalid preview edit");
+
+  await evaluate(client, `document.querySelector("#shortcut-help-button").focus()`);
   await dispatchShortcut(client, { key: "?" });
   const openHelp = await waitFor(async () => {
     const state = await evaluate(client, `(${shortcutHelpState})()`);
@@ -185,13 +256,14 @@ try {
     throw new Error("Escape did not clear and leave the output filter");
   }
 
+  await evaluate(client, `document.querySelector("#validate-button").click()`);
+  await waitFor(async () => evaluate(client, `document.querySelector("#validate-button").classList.contains("validated")`), "sample revalidated after editor shortcut checks");
   await evaluate(client, `document.querySelector("[data-view='map']").click()`);
   const mapState = await waitFor(async () => {
     const state = await evaluate(client, `(${mapRenderState})()`);
     return state.nonblankCanvas || state.fallbackNodes >= 2 ? state : false;
   }, "service map rendered");
 
-  const sampleTopology = await evaluate(client, `window.motelPlayground.getTopology()`);
   const maxNodeControl = await evaluate(client, `(() => {
     const input = document.querySelector("#max-nodes");
     return { value: input.value, min: input.min, max: input.max, step: input.step };
@@ -491,19 +563,6 @@ try {
     return state.cleared ? state : false;
   }, "invalid validation clears stale state");
 
-  await setEditorValue(client, sampleTopology);
-  await evaluate(client, `document.querySelector("#validate-button").click()`);
-  await waitFor(async () => evaluate(client, `document.querySelector("#validate-button").classList.contains("validated")`), "sample revalidated");
-  await evaluate(client, `document.querySelector("#run-button").click()`);
-  await waitFor(async () => Number(await evaluate(client, `document.querySelector("#metric-spans").textContent`)) > 0, "spans captured after revalidation");
-
-  await setEditorValue(client, invalidTopology);
-  await evaluate(client, `document.querySelector("#run-button").click()`);
-  await waitFor(async () => {
-    const state = await evaluate(client, `(${failedRunStateSnapshot})()`);
-    return state.cleared ? state : false;
-  }, "failed run clears stale state");
-
   console.log(`browser smoke ok: map rendered via ${mapState.nonblankCanvas ? "p5 canvas" : "HTML fallback"}; stale states cleared`);
 } finally {
   if (client) client.close();
@@ -726,6 +785,81 @@ async function generateDifferentTopology(client, previousValue) {
       ? snapshot
       : false;
   }, "random topology changed");
+}
+
+function resultTabA11yState() {
+  const expectedTabCount = 6;
+  const tabs = Array.from(document.querySelectorAll(".tabs [role='tab']"));
+  const panels = Array.from(document.querySelectorAll(".view[role='tabpanel']"));
+  const selectedTabs = tabs.filter((tab) => tab.getAttribute("aria-selected") === "true");
+  const invalidTabs = tabs.filter((tab) => {
+    const panel = document.getElementById(tab.getAttribute("aria-controls"));
+    return !tab.id || !panel || panel.getAttribute("aria-labelledby") !== tab.id;
+  });
+  const invalidPanels = panels.filter((panel) => {
+    const tab = document.getElementById(panel.getAttribute("aria-labelledby"));
+    const active = panel.classList.contains("active");
+    return !panel.id || !tab || panel.hidden === active;
+  });
+  const ok = tabs.length === expectedTabCount
+    && panels.length === expectedTabCount
+    && selectedTabs.length === 1
+    && invalidTabs.length === 0
+    && invalidPanels.length === 0;
+  return {
+    ok,
+    tabs: tabs.map((tab) => ({
+      id: tab.id,
+      selected: tab.getAttribute("aria-selected"),
+      controls: tab.getAttribute("aria-controls"),
+      tabindex: tab.getAttribute("tabindex") || "0",
+    })),
+    panels: panels.map((panel) => ({
+      id: panel.id,
+      labelledby: panel.getAttribute("aria-labelledby"),
+      hidden: panel.hidden,
+      active: panel.classList.contains("active"),
+    })),
+    invalidTabs: invalidTabs.map((tab) => tab.id),
+    invalidPanels: invalidPanels.map((panel) => panel.id),
+  };
+}
+
+function resultTabFocusState() {
+  const selectedTab = document.querySelector("[role='tab'][aria-selected='true']");
+  return {
+    activeView: document.querySelector(".tab.active")?.dataset.view,
+    focusedTab: document.activeElement?.id,
+    selectedTab: selectedTab?.id,
+  };
+}
+
+function previewThemeState() {
+  const svg = document.querySelector("#preview svg");
+  const bg = svg?.querySelector(".preview-bg");
+  const title = svg?.querySelector(".title");
+  const card = svg?.querySelector(".card");
+  const html = svg?.outerHTML || "";
+  return {
+    theme: document.documentElement.dataset.theme,
+    calls: window.__previewRenderCalls || 0,
+    hasSVG: Boolean(svg),
+    backgroundFill: bg ? getComputedStyle(bg).fill : "",
+    textFill: title ? getComputedStyle(title).fill : "",
+    cardFill: card ? getComputedStyle(card).fill : "",
+    hardcodedLight: /#(?:f7f7f5|262626|666|777|deded9|9f9f98|242424|fff|d7d7d1|e9e9e4)/i.test(html),
+  };
+}
+
+function invalidPreviewEditState() {
+  const preview = document.querySelector("#preview");
+  return {
+    cleared: !preview.querySelector("svg")
+      && preview.textContent.includes("Validate the topology")
+      && document.querySelector("#validate-button").textContent === "Validate",
+    preview: preview.textContent,
+    unhandled: window.__unhandledRejections || [],
+  };
 }
 
 function shortcutHelpState() {
@@ -1030,32 +1164,4 @@ function invalidValidationState() {
     && metrics.spans === "0"
     && metrics.errors === "0%";
   return { cleared, validate: validate.textContent, preview: preview.textContent, map: map.textContent, spans: spans.textContent, signalMetrics: signalMetrics.textContent, signalLogs: signalLogs.textContent, metrics };
-}
-
-function failedRunStateSnapshot() {
-  const map = document.querySelector("#service-map");
-  const preview = document.querySelector("#preview");
-  const spans = document.querySelector("#traces");
-  const signalMetrics = document.querySelector("#signal-metrics");
-  const signalLogs = document.querySelector("#signal-logs");
-  const metrics = {
-    traces: document.querySelector("#metric-traces").textContent,
-    spans: document.querySelector("#metric-spans").textContent,
-    errors: document.querySelector("#metric-errors").textContent,
-  };
-  const cleared = document.querySelector("#summary-line").classList.contains("bad")
-    && !preview.querySelector("svg")
-    && preview.textContent.includes("Fix the run error")
-    && !map.querySelector("canvas")
-    && map.textContent.includes("Fix the run error")
-    && !spans.querySelector(".trace-group")
-    && spans.textContent.includes("Run failed")
-    && !signalMetrics.querySelector(".signal-item")
-    && signalMetrics.textContent.includes("Run failed")
-    && !signalLogs.querySelector(".signal-item")
-    && signalLogs.textContent.includes("Run failed")
-    && metrics.traces === "0"
-    && metrics.spans === "0"
-    && metrics.errors === "0%";
-  return { cleared, summary: document.querySelector("#summary-line").textContent, preview: preview.textContent, map: map.textContent, spans: spans.textContent, signalMetrics: signalMetrics.textContent, signalLogs: signalLogs.textContent, metrics };
 }

@@ -94,38 +94,38 @@
           </div>
 
           <div class="tabs" role="tablist" aria-label="Result views">
-            <button class="tab active" data-view="preview" type="button" aria-keyshortcuts="1">Traffic</button>
-            <button class="tab" data-view="traces" type="button" aria-keyshortcuts="2">Spans</button>
-            <button class="tab" data-view="metrics" type="button" aria-keyshortcuts="3">Metrics</button>
-            <button class="tab" data-view="logs" type="button" aria-keyshortcuts="4">Logs</button>
-            <button class="tab" data-view="map" type="button" aria-keyshortcuts="5">Map</button>
-            <button class="tab" data-view="raw" type="button" aria-keyshortcuts="6">Raw</button>
+            <button id="tab-preview" class="tab active" data-view="preview" type="button" role="tab" aria-selected="true" aria-controls="view-preview" aria-keyshortcuts="1">Traffic</button>
+            <button id="tab-traces" class="tab" data-view="traces" type="button" role="tab" aria-selected="false" aria-controls="view-traces" aria-keyshortcuts="2" tabindex="-1">Spans</button>
+            <button id="tab-metrics" class="tab" data-view="metrics" type="button" role="tab" aria-selected="false" aria-controls="view-metrics" aria-keyshortcuts="3" tabindex="-1">Metrics</button>
+            <button id="tab-logs" class="tab" data-view="logs" type="button" role="tab" aria-selected="false" aria-controls="view-logs" aria-keyshortcuts="4" tabindex="-1">Logs</button>
+            <button id="tab-map" class="tab" data-view="map" type="button" role="tab" aria-selected="false" aria-controls="view-map" aria-keyshortcuts="5" tabindex="-1">Map</button>
+            <button id="tab-raw" class="tab" data-view="raw" type="button" role="tab" aria-selected="false" aria-controls="view-raw" aria-keyshortcuts="6" tabindex="-1">Raw</button>
           </div>
 
-          <section class="view active" id="view-preview" aria-label="Traffic preview">
+          <section class="view active" id="view-preview" role="tabpanel" aria-labelledby="tab-preview" tabindex="0">
             <div id="preview"></div>
           </section>
-          <section class="view" id="view-traces" aria-label="Span waterfall">
+          <section class="view" id="view-traces" role="tabpanel" aria-labelledby="tab-traces" tabindex="0" hidden>
             <div class="span-toolbar">
               <button id="error-filter" class="filter-toggle" type="button" aria-pressed="false" disabled>Errors only</button>
               <span id="span-filter-count">0 traces</span>
             </div>
             <div id="traces" class="span-list"></div>
           </section>
-          <section class="view" id="view-metrics" aria-label="Metric signals">
+          <section class="view" id="view-metrics" role="tabpanel" aria-labelledby="tab-metrics" tabindex="0" hidden>
             <div id="signal-metrics" class="signal-list"></div>
           </section>
-          <section class="view" id="view-logs" aria-label="Log signals">
+          <section class="view" id="view-logs" role="tabpanel" aria-labelledby="tab-logs" tabindex="0" hidden>
             <div class="span-toolbar">
               <button id="log-severity-filter" class="filter-toggle" type="button" aria-pressed="false" disabled>Warn and error</button>
               <span id="log-filter-count">0 logs</span>
             </div>
             <div id="signal-logs" class="signal-list"></div>
           </section>
-          <section class="view" id="view-map" aria-label="Service map">
+          <section class="view" id="view-map" role="tabpanel" aria-labelledby="tab-map" tabindex="0" hidden>
             <div id="service-map" class="service-map"></div>
           </section>
-          <section class="view" id="view-raw" aria-label="Raw output">
+          <section class="view" id="view-raw" role="tabpanel" aria-labelledby="tab-raw" tabindex="0" hidden>
             <div id="raw-output" class="raw-output"></div>
           </section>
         </div>
