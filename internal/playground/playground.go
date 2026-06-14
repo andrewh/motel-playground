@@ -1474,7 +1474,11 @@ func shorten(value string, limit int) string {
 	if limit <= 3 {
 		return value[:limit]
 	}
-	return value[:limit-3] + "..."
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit-3]) + "..."
 }
 
 func sampleRates(traffic synth.TrafficPattern, scenarios []synth.Scenario, duration time.Duration) []rateSample {
