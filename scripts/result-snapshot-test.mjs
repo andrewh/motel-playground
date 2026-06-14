@@ -52,6 +52,7 @@ const snapshot = createResultSnapshot({
   topology,
   settings: {
     duration: 2.5,
+    slowThresholdMs: 25,
     seed: 314,
     maxNodes: 4,
     signals: {
@@ -71,6 +72,7 @@ assert.deepEqual(snapshot, {
   topology,
   settings: {
     duration: "2.5",
+    slowThresholdMs: "25",
     seed: "314",
     maxNodes: "4",
     signals: {
@@ -99,6 +101,7 @@ const minimalSnapshot = normalizeResultSnapshot({
 
 assert.deepEqual(minimalSnapshot.settings, {
   duration: "1",
+  slowThresholdMs: "0",
   seed: "42",
   maxNodes: "8",
   signals: {

@@ -638,16 +638,83 @@ textarea {
 }
 
 .controls {
-  display: flex;
+  display: grid;
   gap: var(--space-4);
-  align-items: end;
+  align-items: stretch;
   border-bottom: 1px solid var(--line);
   background: var(--surface-raised);
   padding: var(--space-4);
 }
 
+.control-row {
+  display: flex;
+  gap: var(--space-4);
+  align-items: end;
+  min-width: 0;
+}
+
+.control-row-secondary {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
 .filter-field {
-  flex: 1 1 220px;
+  flex: 1 1 240px;
+  min-width: 180px;
+}
+
+.duration-control {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 76px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.duration-control legend {
+  display: block;
+  margin: 0 0 var(--space-2);
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 620;
+  text-transform: uppercase;
+}
+
+.duration-control #duration {
+  width: 76px;
+}
+
+.slow-threshold-field {
+  flex: 0 0 auto;
+  min-width: 170px;
+}
+
+.slow-threshold-input {
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  width: max-content;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted-strong);
+  font-size: 0.78rem;
+  font-weight: 620;
+  text-transform: none;
+}
+
+.slow-threshold-input span {
+  padding: 0 var(--space-3);
+}
+
+.slow-threshold-input input {
+  width: 84px;
+  height: 36px;
+  border-width: 0 1px 0 0;
+  border-radius: 0;
+  text-align: center;
 }
 
 .signal-selector {
@@ -744,6 +811,7 @@ textarea {
   display: grid;
   gap: var(--space-2);
   align-items: end;
+  flex: 0 0 auto;
 }
 
 .result-action-buttons {
@@ -1402,15 +1470,23 @@ pre {
     flex: 1 1 46%;
   }
 
-  .pane-head,
-  .controls {
+  .pane-head {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .actions,
-  .controls {
+  .actions {
     display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .controls,
+  .control-row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .control-row-primary {
     grid-template-columns: 1fr 1fr;
   }
 

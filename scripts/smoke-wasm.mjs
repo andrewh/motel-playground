@@ -62,6 +62,20 @@ scenarios:
           - target: cache.get
 `;
 
+const slowLogTopology = `version: 1
+services:
+  gateway:
+    operations:
+      GET /slow:
+        duration: 20ms +/- 1ms
+        logs:
+          - severity: WARN
+            body: "slow request {operation.name}"
+            condition: slow
+traffic:
+  rate: 3/s
+`;
+
 const validation = JSON.parse(await globalThis.motelValidate(topology));
 if (!validation.ok) {
   throw new Error(`validation failed: ${JSON.stringify(validation.diagnostics)}`);
@@ -133,6 +147,15 @@ if (
   || metricsOnlyRun.logs?.length
 ) {
   throw new Error(`signal selection was not applied: ${JSON.stringify(metricsOnlyRun)}`);
+}
+
+const slowDisabledRun = JSON.parse(await globalThis.motelRun(slowLogTopology, 1, 7, { traces: true, metrics: true, logs: true }, 0));
+if (!slowDisabledRun.ok || slowDisabledRun.logs?.length) {
+  throw new Error(`zero slow threshold should suppress slow logs: ${JSON.stringify(slowDisabledRun)}`);
+}
+const slowEnabledRun = JSON.parse(await globalThis.motelRun(slowLogTopology, 1, 7, { traces: true, metrics: true, logs: true }, 1));
+if (!slowEnabledRun.ok || !slowEnabledRun.logs?.some((log) => log.body.includes("slow request GET /slow"))) {
+  throw new Error(`slow threshold did not emit slow logs: ${JSON.stringify(slowEnabledRun)}`);
 }
 
 for (const seed of [1, 42, 777, 2026]) {

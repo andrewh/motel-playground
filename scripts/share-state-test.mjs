@@ -26,6 +26,7 @@ const payload = {
   topology,
   settings: {
     duration: "2.5",
+    slowThresholdMs: "25",
     seed: "314",
     maxNodes: "4",
     signals: {

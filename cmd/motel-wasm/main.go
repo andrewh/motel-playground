@@ -20,7 +20,8 @@ func main() {
 		duration := secondsArg(args, 1, 1)
 		seed := uint64(numberArg(args, 2, 1))
 		signals := runSignalsArg(args, 3)
-		return playground.ToJSON(playground.Run(args[0].String(), duration, seed, signals)), nil
+		slowThreshold := millisecondsArg(args, 4, 0)
+		return playground.ToJSON(playground.Run(args[0].String(), duration, seed, signals, slowThreshold)), nil
 	}))
 	js.Global().Set("motelPreview", async(func(args []js.Value) (string, error) {
 		duration := secondsArg(args, 1, 300)
@@ -79,6 +80,14 @@ func secondsArg(args []js.Value, index int, fallback float64) time.Duration {
 		value = fallback
 	}
 	return time.Duration(value * float64(time.Second))
+}
+
+func millisecondsArg(args []js.Value, index int, fallback float64) time.Duration {
+	value := floatArg(args, index, fallback)
+	if value <= 0 {
+		return 0
+	}
+	return time.Duration(value * float64(time.Millisecond))
 }
 
 func floatArg(args []js.Value, index int, fallback float64) float64 {

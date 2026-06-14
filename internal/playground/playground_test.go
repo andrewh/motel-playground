@@ -13,6 +13,7 @@ const (
 	floatTolerance       = 0.0001
 	testRunDuration      = 200 * time.Millisecond
 	testRunSeed          = 7
+	testSlowThreshold    = time.Millisecond
 	testOperationLatency = 5 * time.Millisecond
 )
 
@@ -326,6 +327,27 @@ func TestRunSignalSelection(t *testing.T) {
 	}
 }
 
+func TestRunSlowThreshold(t *testing.T) {
+	withoutThreshold := Run(testSlowLogTopology, testRunDuration, testRunSeed, DefaultRunSignals(), 0)
+	if !withoutThreshold.OK {
+		t.Fatalf("Run() without threshold failed: %#v", withoutThreshold.Errors)
+	}
+	if len(withoutThreshold.Logs) != 0 {
+		t.Fatalf("Run() without threshold emitted slow logs: %#v", withoutThreshold.Logs)
+	}
+
+	withThreshold := Run(testSlowLogTopology, testRunDuration, testRunSeed, DefaultRunSignals(), testSlowThreshold)
+	if !withThreshold.OK {
+		t.Fatalf("Run() with threshold failed: %#v", withThreshold.Errors)
+	}
+	if len(withThreshold.Logs) == 0 {
+		t.Fatalf("Run() with threshold did not emit slow logs")
+	}
+	if got := withThreshold.Logs[0].Body; got != "slow request GET /slow" {
+		t.Fatalf("Run() slow log body = %q, want %q", got, "slow request GET /slow")
+	}
+}
+
 const testSignalTopology = `version: 1
 services:
   gateway:
@@ -339,6 +361,20 @@ services:
     operations:
       GET /:
         duration: 5ms +/- 1ms
+traffic:
+  rate: 20/s
+`
+
+const testSlowLogTopology = `version: 1
+services:
+  gateway:
+    operations:
+      GET /slow:
+        duration: 20ms +/- 1ms
+        logs:
+          - severity: WARN
+            body: "slow request {operation.name}"
+            condition: slow
 traffic:
   rate: 20/s
 `
