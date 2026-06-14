@@ -84,6 +84,7 @@ const state = {
   currentTopology: null,
   errorTracesOnly: false,
   warnLogsOnly: false,
+  resultFilter: "",
   editorRevision: 0,
   runtimeBusy: false,
   runBusy: false,
@@ -119,6 +120,7 @@ const els = {
   duration: document.querySelector("#duration"),
   maxNodes: document.querySelector("#max-nodes"),
   seed: document.querySelector("#seed"),
+  resultFilter: document.querySelector("#result-filter"),
   preview: document.querySelector("#preview"),
   traces: document.querySelector("#traces"),
   errorFilter: document.querySelector("#error-filter"),
@@ -175,6 +177,10 @@ els.errorFilter.addEventListener("click", () => {
 els.logSeverityFilter.addEventListener("click", () => {
   state.warnLogsOnly = !state.warnLogsOnly;
   renderLogs(state.lastRun?.logs ?? []);
+});
+els.resultFilter.addEventListener("input", () => {
+  state.resultFilter = els.resultFilter.value.trim().toLowerCase();
+  renderFilteredResults();
 });
 els.duration.addEventListener("input", () => {
   if (state.ready && state.currentTopology && !state.runtimeBusy) {
@@ -419,12 +425,18 @@ function renderRunWorkerError(error) {
 }
 
 function renderMetrics(metrics) {
+  const filter = resultFilter();
   const ordered = metrics.slice().sort(compareSignals);
+  const visible = filter ? ordered.filter((metric) => signalMatchesFilter(metric, filter)) : ordered;
   if (ordered.length === 0) {
     els.signalMetrics.innerHTML = `<p class="empty">No metrics captured yet.</p>`;
     return;
   }
-  els.signalMetrics.innerHTML = ordered.map((metric, index) => {
+  if (visible.length === 0) {
+    els.signalMetrics.innerHTML = `<p class="empty">No metrics match this filter.</p>`;
+    return;
+  }
+  els.signalMetrics.innerHTML = visible.map((metric, index) => {
     const panelID = `metric-panel-${index}`;
     return `<article class="signal-item">
       <button class="signal-row" type="button" aria-expanded="false" aria-controls="${panelID}">
@@ -462,10 +474,12 @@ function renderMetricDetails(metric) {
 }
 
 function renderLogs(logs) {
+  const filter = resultFilter();
   const ordered = logs.slice().sort(compareSignals);
   const notableCount = ordered.filter((log) => isNotableLog(log)).length;
-  const visible = state.warnLogsOnly ? ordered.filter((log) => isNotableLog(log)) : ordered;
-  syncLogFilter(notableCount, ordered.length);
+  const severityFiltered = state.warnLogsOnly ? ordered.filter((log) => isNotableLog(log)) : ordered;
+  const visible = filter ? severityFiltered.filter((log) => signalMatchesFilter(log, filter)) : severityFiltered;
+  syncLogFilter(notableCount, ordered.length, visible.length);
   if (ordered.length === 0) {
     els.signalLogs.innerHTML = `<p class="empty">No logs captured yet.</p>`;
     return;
@@ -513,6 +527,7 @@ function renderLogDetails(log) {
 }
 
 function renderSpans(spans) {
+  const filter = resultFilter();
   const orderedSpans = spans
     .slice()
     .sort(compareSpans);
@@ -523,12 +538,18 @@ function renderSpans(spans) {
   }
   const traceGroups = groupSpansByTrace(orderedSpans);
   const errorTraceCount = traceGroups.filter((trace) => trace.errors > 0).length;
-  const visibleGroups = state.errorTracesOnly
+  const candidateGroups = state.errorTracesOnly
     ? traceGroups.filter((trace) => trace.errors > 0)
     : traceGroups;
-  syncSpanFilter(errorTraceCount, traceGroups.length);
+  const visibleGroups = filter
+    ? candidateGroups.flatMap((trace) => {
+      const matchedSpans = trace.spans.filter((span) => spanMatchesFilter(span, filter));
+      return matchedSpans.length ? [makeTraceGroup(trace.id, matchedSpans, trace.root)] : [];
+    })
+    : candidateGroups;
+  syncSpanFilter(errorTraceCount, traceGroups.length, visibleGroups.length);
   if (visibleGroups.length === 0) {
-    els.traces.innerHTML = `<p class="empty">No error traces in this run.</p>`;
+    els.traces.innerHTML = `<p class="empty">${filter ? "No spans match this filter." : "No error traces in this run."}</p>`;
     return;
   }
   const maxDuration = Math.max(...orderedSpans.map((span) => span.duration_ms), 1);
@@ -746,24 +767,88 @@ function markEditorChanged() {
   setValidateButton("Validate");
 }
 
-function syncSpanFilter(errorTraceCount, totalTraceCount) {
+function syncSpanFilter(errorTraceCount, totalTraceCount, visibleTraceCount = totalTraceCount) {
   els.errorFilter.disabled = totalTraceCount === 0;
   els.errorFilter.setAttribute("aria-pressed", String(state.errorTracesOnly));
   els.errorFilter.classList.toggle("active", state.errorTracesOnly);
   els.errorFilter.textContent = state.errorTracesOnly ? "Showing errors" : "Errors only";
-  els.spanFilterCount.textContent = totalTraceCount
+  const filter = resultFilter();
+  els.spanFilterCount.textContent = filter && totalTraceCount
+    ? `${visibleTraceCount} of ${totalTraceCount} traces match`
+    : totalTraceCount
     ? `${errorTraceCount} of ${totalTraceCount} traces with errors`
     : "0 traces";
 }
 
-function syncLogFilter(notableCount, totalCount) {
+function syncLogFilter(notableCount, totalCount, visibleCount = totalCount) {
   els.logSeverityFilter.disabled = totalCount === 0;
   els.logSeverityFilter.setAttribute("aria-pressed", String(state.warnLogsOnly));
   els.logSeverityFilter.classList.toggle("active", state.warnLogsOnly);
   els.logSeverityFilter.textContent = state.warnLogsOnly ? "Showing warn/error" : "Warn and error";
-  els.logFilterCount.textContent = totalCount
+  const filter = resultFilter();
+  els.logFilterCount.textContent = filter && totalCount
+    ? `${visibleCount} of ${totalCount} logs match`
+    : totalCount
     ? `${notableCount} of ${totalCount} logs warn/error`
     : "0 logs";
+}
+
+function renderFilteredResults() {
+  if (!state.lastRun) {
+    syncSpanFilter(0, 0);
+    syncLogFilter(0, 0);
+    return;
+  }
+  renderSpans(state.lastRun.spans ?? []);
+  renderMetrics(state.lastRun.metrics ?? []);
+  renderLogs(state.lastRun.logs ?? []);
+}
+
+function resultFilter() {
+  return state.resultFilter;
+}
+
+function spanMatchesFilter(span, filter) {
+  return searchableText([
+    span.trace_id,
+    span.span_id,
+    span.service,
+    span.operation,
+    span.parent_service,
+    span.parent_operation,
+    span.kind,
+    span.is_error ? "error" : "ok",
+    ...(span.scenarios ?? []),
+    span.attributes,
+  ]).includes(filter);
+}
+
+function signalMatchesFilter(signal, filter) {
+  return searchableText([
+    signal.name,
+    signal.type,
+    signal.unit,
+    signal.service,
+    signal.operation,
+    signal.severity,
+    signal.body,
+    signal.trace_id,
+    signal.span_id,
+    signal.attributes,
+  ]).includes(filter);
+}
+
+function searchableText(values) {
+  return values.flatMap(searchableParts).join(" ").toLowerCase();
+}
+
+function searchableParts(value) {
+  if (value == null) return [];
+  if (Array.isArray(value)) return value.flatMap(searchableParts);
+  if (typeof value === "object") {
+    return Object.entries(value).flatMap(([key, entry]) => [key, ...searchableParts(entry)]);
+  }
+  return [String(value)];
 }
 
 function bindSignalDrawers(root) {
