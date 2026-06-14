@@ -10,6 +10,11 @@ import { setTimeout as delay } from "node:timers/promises";
 
 const webRoot = fileURLToPath(new URL("../web/", import.meta.url));
 const pagesBasePath = "/motel-playground/";
+const a4PaperHeightInches = 11.69;
+const a4PaperWidthInches = 8.27;
+const letterPaperHeightInches = 11;
+const letterPaperWidthInches = 8.5;
+const minReportPDFBase64Length = 6000;
 const oversizedTopologyPaddingLength = 9000;
 const invalidTopology = "version: 1\nservices: [\n";
 const oversizedTopology = `version: 1\n# ${"x".repeat(oversizedTopologyPaddingLength)}\nservices: {}\n`;
@@ -382,6 +387,37 @@ try {
   if (!importedRaw.formatted) {
     throw new Error(`imported raw JSON was not formatted: ${JSON.stringify(importedRaw)}`);
   }
+  await evaluate(client, `(${installPrintSpy})()`);
+  await evaluate(client, `document.querySelector("#print-report-button").click()`);
+  const reportState = await waitFor(async () => {
+    const state = await evaluate(client, `(${printReportState})()`);
+    return state.ready ? state : false;
+  }, "printable report generated");
+  if (
+    !reportState.reportReady
+    || reportState.prints !== 1
+    || reportState.nodes < 2
+    || reportState.tables < 4
+    || reportState.interactiveControls !== 0
+    || !reportState.sections.includes("Topology map")
+    || !reportState.sections.includes("Topology configuration")
+    || !reportState.text.includes("gateway.request.duration")
+    || !reportState.text.includes("gateway handled")
+  ) {
+    throw new Error(`printable report is incomplete: ${JSON.stringify(reportState)}`);
+  }
+  const a4Report = await client.send("Page.printToPDF", {
+    paperHeight: a4PaperHeightInches,
+    paperWidth: a4PaperWidthInches,
+    printBackground: true,
+  });
+  const letterReport = await client.send("Page.printToPDF", {
+    paperHeight: letterPaperHeightInches,
+    paperWidth: letterPaperWidthInches,
+    printBackground: true,
+  });
+  assertReportPDF("A4", a4Report);
+  assertReportPDF("Letter", letterReport);
   await evaluate(client, `document.querySelector("[data-view='metrics']").click()`);
   const metricState = await waitFor(async () => {
     const state = await evaluate(client, `(${signalTabState})("metrics")`);
@@ -803,6 +839,27 @@ function resultImportState() {
   };
 }
 
+function installPrintSpy() {
+  window.__printCount = 0;
+  window.print = () => {
+    window.__printCount += 1;
+  };
+}
+
+function printReportState() {
+  const report = document.querySelector("#print-report");
+  return {
+    ready: window.__printCount > 0 && report.textContent.includes("Topology report"),
+    reportReady: document.body.classList.contains("report-ready"),
+    prints: window.__printCount,
+    nodes: report.querySelectorAll(".report-node").length,
+    tables: report.querySelectorAll(".report-table").length,
+    interactiveControls: report.querySelectorAll("button, input, textarea, select, .tab, .CodeMirror").length,
+    sections: Array.from(report.querySelectorAll(".report-section h2")).map((heading) => heading.textContent),
+    text: report.textContent,
+  };
+}
+
 function mapRenderState() {
   const map = document.querySelector("#service-map");
   const canvas = map.querySelector("canvas");
@@ -937,6 +994,12 @@ function runControlState() {
     validateDisabled: document.querySelector("#validate-button").disabled,
     runDisabled: document.querySelector("#run-button").disabled,
   };
+}
+
+function assertReportPDF(label, pdf) {
+  if (!pdf?.data || pdf.data.length < minReportPDFBase64Length) {
+    throw new Error(`${label} report PDF was too small: ${pdf?.data?.length ?? 0}`);
+  }
 }
 
 function invalidValidationState() {
