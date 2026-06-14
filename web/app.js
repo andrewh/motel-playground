@@ -369,7 +369,7 @@ async function loadWasm() {
   } catch (error) {
     els.status.textContent = "Build runtime first";
     els.status.classList.add("error");
-    els.raw.textContent = String(error);
+    renderRawText(String(error));
   }
 }
 
@@ -386,7 +386,7 @@ async function validate({ passive = false } = {}) {
     if (valid) {
       await renderPreview();
     }
-    els.raw.textContent = JSON.stringify(result, null, 2);
+    renderRawJson(result);
   } finally {
     setRuntimeBusy(false);
     if (!passive) {
@@ -410,7 +410,7 @@ async function run() {
     }));
     if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
     renderRun(result);
-    els.raw.textContent = JSON.stringify(result, null, 2);
+    renderRawJson(result);
   } catch (error) {
     if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
     renderRunWorkerError(error);
@@ -431,7 +431,7 @@ async function generateTopology() {
   els.summary.textContent = "Generated topology";
   clearRunOutput(emptyCopy.spans);
   clearSignalOutput();
-  els.raw.textContent = "";
+  clearRawOutput();
   if (state.ready) await validate({ passive: true });
 }
 
@@ -465,7 +465,7 @@ async function loadTopologyFile() {
     els.summary.textContent = `Loaded ${file.name}`;
     clearRunOutput(emptyCopy.spans);
     clearSignalOutput();
-    els.raw.textContent = "";
+    clearRawOutput();
     if (state.ready) await validate({ passive: true });
   } catch (error) {
     els.summary.textContent = `Could not load file: ${error.message}`;
@@ -570,7 +570,7 @@ function renderRunWorkerError(error) {
   els.summary.textContent = error?.message || "Run failed";
   els.summary.classList.remove("good");
   els.summary.classList.add("bad");
-  els.raw.textContent = String(error?.stack || error?.message || error);
+  renderRawText(String(error?.stack || error?.message || error));
 }
 
 function renderMetrics(metrics) {
@@ -843,6 +843,100 @@ function renderSpanDetails(span) {
 
 function spanFact(label, value) {
   return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+}
+
+function renderRawJson(value) {
+  els.raw.classList.remove("raw-text");
+  els.raw.innerHTML = `<div class="raw-tree" role="tree">${renderJsonValue(value, {
+    depth: 0,
+    path: "root",
+    trailingComma: false,
+  })}</div>`;
+  bindRawJsonToggles();
+}
+
+function renderRawText(value) {
+  els.raw.classList.add("raw-text");
+  els.raw.innerHTML = `<pre>${escapeHtml(value)}</pre>`;
+}
+
+function clearRawOutput() {
+  els.raw.classList.remove("raw-text");
+  els.raw.innerHTML = "";
+}
+
+function renderJsonValue(value, { key, depth, path, trailingComma }) {
+  const comma = trailingComma ? `<span class="json-punct">,</span>` : "";
+  const keyMarkup = key == null
+    ? ""
+    : `<span class="json-key">${escapeHtml(JSON.stringify(key))}</span><span class="json-punct">: </span>`;
+  if (value == null || typeof value !== "object") {
+    return `<div class="json-line" style="--depth:${depth}" role="treeitem">
+      ${keyMarkup}${renderJsonPrimitive(value)}${comma}
+    </div>`;
+  }
+
+  const entries = Array.isArray(value)
+    ? value.map((entry, index) => [String(index), entry])
+    : Object.entries(value);
+  const open = Array.isArray(value) ? "[" : "{";
+  const close = Array.isArray(value) ? "]" : "}";
+  if (entries.length === 0) {
+    return `<div class="json-line" style="--depth:${depth}" role="treeitem">
+      ${keyMarkup}<span class="json-punct">${open}${close}</span>${comma}
+    </div>`;
+  }
+
+  const expanded = depth < 2;
+  const groupID = `raw-${path.replaceAll(/[^a-zA-Z0-9_-]/g, "-")}`;
+  const childMarkup = entries.map(([entryKey, entryValue], index) => renderJsonValue(entryValue, {
+    key: Array.isArray(value) ? undefined : entryKey,
+    depth: depth + 1,
+    path: `${path}-${entryKey}`,
+    trailingComma: index < entries.length - 1,
+  })).join("");
+
+  return `<div class="json-branch" role="treeitem" aria-expanded="${expanded}">
+    <div class="json-line" style="--depth:${depth}">
+      <button class="json-toggle" type="button" aria-expanded="${expanded}" aria-controls="${groupID}">
+        <span class="json-caret" aria-hidden="true"></span>
+        <span class="sr-only">${expanded ? "Collapse" : "Expand"} JSON ${key ?? "root"}</span>
+      </button>${keyMarkup}<span class="json-punct">${open}</span>
+    </div>
+    <div class="json-children" id="${groupID}" role="group" ${expanded ? "" : "hidden"}>
+      ${childMarkup}
+    </div>
+    <div class="json-line json-close" style="--depth:${depth}">
+      <span class="json-punct">${close}</span>${comma}
+    </div>
+  </div>`;
+}
+
+function renderJsonPrimitive(value) {
+  if (typeof value === "string") {
+    return `<span class="json-string">${escapeHtml(JSON.stringify(value))}</span>`;
+  }
+  if (typeof value === "number") {
+    return `<span class="json-number">${escapeHtml(String(value))}</span>`;
+  }
+  if (typeof value === "boolean") {
+    return `<span class="json-boolean">${value}</span>`;
+  }
+  return `<span class="json-null">null</span>`;
+}
+
+function bindRawJsonToggles() {
+  for (const toggle of els.raw.querySelectorAll(".json-toggle")) {
+    toggle.addEventListener("click", () => {
+      const children = document.getElementById(toggle.getAttribute("aria-controls"));
+      const expanded = toggle.getAttribute("aria-expanded") === "true";
+      toggle.setAttribute("aria-expanded", String(!expanded));
+      toggle.closest(".json-branch")?.setAttribute("aria-expanded", String(!expanded));
+      const label = toggle.querySelector(".sr-only");
+      if (label) label.textContent = label.textContent.replace(expanded ? "Collapse" : "Expand", expanded ? "Expand" : "Collapse");
+      children.hidden = expanded;
+    });
+  }
 }
 
 function renderMap(topology, spans) {

@@ -226,6 +226,29 @@ try {
     throw new Error(`background run status did not describe worker execution: ${JSON.stringify(controlsDuringRun)}`);
   }
   await waitFor(async () => Number(await evaluate(client, `document.querySelector("#metric-spans").textContent`)) > 0, "spans captured");
+  await evaluate(client, `document.querySelector("[data-view='raw']").click()`);
+  const rawExpanded = await waitFor(async () => {
+    const state = await evaluate(client, `(${rawJsonState})()`);
+    return state.foldControls > 0
+      && state.lines > 8
+      && state.hasBraces
+      && state.hasCommas
+      && state.hasRunKeys
+      ? state
+      : false;
+  }, "raw JSON tree rendered");
+  if (!rawExpanded.focusedToggle) {
+    throw new Error(`raw JSON fold control was not focusable: ${JSON.stringify(rawExpanded)}`);
+  }
+  await evaluate(client, `document.querySelector("#raw-output .json-toggle").click()`);
+  const rawCollapsed = await waitFor(async () => {
+    const state = await evaluate(client, `(${rawJsonState})()`);
+    return state.hiddenGroups > 0 ? state : false;
+  }, "raw JSON tree collapsed");
+  if (rawCollapsed.foldControls !== rawExpanded.foldControls) {
+    throw new Error(`raw JSON collapse changed fold controls unexpectedly: ${JSON.stringify({ rawExpanded, rawCollapsed })}`);
+  }
+  await evaluate(client, `document.querySelector("#raw-output .json-toggle").click()`);
   await evaluate(client, `document.querySelector("[data-view='metrics']").click()`);
   const metricState = await waitFor(async () => {
     const state = await evaluate(client, `(${signalTabState})("metrics")`);
@@ -577,6 +600,22 @@ function resultFilterState() {
     logText,
     spanCountText: document.querySelector("#span-filter-count").textContent,
     logCountText: document.querySelector("#log-filter-count").textContent,
+  };
+}
+
+function rawJsonState() {
+  const raw = document.querySelector("#raw-output");
+  const firstToggle = raw.querySelector(".json-toggle");
+  firstToggle?.focus();
+  return {
+    foldControls: raw.querySelectorAll(".json-toggle").length,
+    lines: raw.querySelectorAll(".json-line").length,
+    hiddenGroups: raw.querySelectorAll(".json-children[hidden]").length,
+    hasBraces: raw.textContent.includes("{") && raw.textContent.includes("}"),
+    hasCommas: raw.querySelectorAll(".json-line .json-punct").length > 4 && raw.textContent.includes(","),
+    hasRunKeys: raw.textContent.includes('"ok"') && raw.textContent.includes('"spans"') && raw.textContent.includes('"stats"'),
+    focusedToggle: document.activeElement === firstToggle,
+    plainFallback: Boolean(raw.querySelector("pre")),
   };
 }
 
