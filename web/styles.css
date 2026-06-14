@@ -91,6 +91,10 @@ body {
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
+body.modal-open {
+  overflow: hidden;
+}
+
 button,
 input,
 textarea {
@@ -275,6 +279,11 @@ h2 {
   background: var(--surface-raised);
 }
 
+.icon-button span {
+  font-weight: 720;
+  line-height: 1;
+}
+
 .theme-icon {
   width: 18px;
   height: 18px;
@@ -292,6 +301,112 @@ h2 {
 
 :root[data-theme="dark"] .theme-icon-moon {
   display: block;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  background: oklch(12% 0 0 / 0.52);
+  padding: var(--space-5);
+}
+
+.modal-backdrop[hidden] {
+  display: none;
+}
+
+.shortcut-modal {
+  width: min(620px, 100%);
+  max-height: min(720px, calc(100vh - 48px));
+  overflow: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  animation: reveal 180ms var(--ease-out);
+}
+
+.shortcut-modal:focus {
+  outline: none;
+}
+
+.shortcut-modal:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 4px;
+}
+
+.shortcut-modal-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  align-items: start;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-raised);
+  padding: var(--space-4);
+}
+
+.shortcut-modal-head p {
+  margin-top: var(--space-2);
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.shortcut-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.shortcut-list div {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.44fr) 1fr;
+  gap: var(--space-4);
+  align-items: center;
+  min-height: 54px;
+  border-bottom: 1px solid var(--line);
+}
+
+.shortcut-list div:last-child {
+  border-bottom: 0;
+}
+
+.shortcut-list dt {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 620;
+  text-transform: uppercase;
+}
+
+.shortcut-list dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 560;
+}
+
+kbd {
+  display: inline-grid;
+  min-width: 30px;
+  min-height: 28px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--ink);
+  padding: 0 var(--space-2);
+  font: 0.74rem/1 var(--font-ui);
+  font-weight: 700;
+  text-transform: none;
+  box-shadow: inset 0 -1px 0 var(--line);
 }
 
 .status {
@@ -1017,6 +1132,21 @@ pre {
 
   .icon-button {
     width: 100%;
+  }
+
+  .shortcut-modal-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .shortcut-modal-head .icon-button {
+    width: 42px;
+  }
+
+  .shortcut-list div {
+    grid-template-columns: 1fr;
+    gap: var(--space-2);
+    padding: var(--space-3) 0;
   }
 
   .topnav a {

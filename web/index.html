@@ -29,6 +29,9 @@
               <path d="M20.3 14.9A8.5 8.5 0 0 1 9.1 3.7a7 7 0 1 0 11.2 11.2z"></path>
             </svg>
           </button>
+          <button id="shortcut-help-button" class="icon-button" type="button" aria-label="Show keyboard shortcuts" aria-keyshortcuts="?">
+            <span aria-hidden="true">?</span>
+          </button>
         </div>
       </header>
 
@@ -41,15 +44,15 @@
             </div>
             <div class="actions">
               <input id="topology-file" class="file-input" type="file" accept=".yaml,.yml,text/yaml,text/x-yaml,application/x-yaml" />
-              <button id="load-button" type="button">Load</button>
-              <button id="save-button" type="button">Save</button>
+              <button id="load-button" type="button" aria-keyshortcuts="Meta+O Control+O">Load</button>
+              <button id="save-button" type="button" aria-keyshortcuts="Meta+S Control+S">Save</button>
               <label class="field-compact">
                 Max nodes
                 <input id="max-nodes" type="number" min="2" max="12" step="1" value="8" />
               </label>
               <button id="generate-button" type="button">Random topology</button>
-              <button id="validate-button" type="button">Validate</button>
-              <button id="run-button" type="button" class="primary">Run topology</button>
+              <button id="validate-button" type="button" aria-keyshortcuts="Meta+Shift+Enter Control+Shift+Enter">Validate</button>
+              <button id="run-button" type="button" class="primary" aria-keyshortcuts="Meta+Enter Control+Enter">Run topology</button>
             </div>
           </div>
           <textarea id="editor" spellcheck="false" aria-label="Topology YAML"></textarea>
@@ -67,7 +70,7 @@
             </label>
             <label class="filter-field">
               Filter output
-              <input id="result-filter" type="search" autocomplete="off" placeholder="service, attribute, trace" />
+              <input id="result-filter" type="search" autocomplete="off" placeholder="service, attribute, trace" aria-keyshortcuts="Meta+K Control+K /" />
             </label>
           </div>
 
@@ -78,12 +81,12 @@
           </div>
 
           <div class="tabs" role="tablist" aria-label="Result views">
-            <button class="tab active" data-view="preview" type="button">Traffic</button>
-            <button class="tab" data-view="traces" type="button">Spans</button>
-            <button class="tab" data-view="metrics" type="button">Metrics</button>
-            <button class="tab" data-view="logs" type="button">Logs</button>
-            <button class="tab" data-view="map" type="button">Map</button>
-            <button class="tab" data-view="raw" type="button">Raw</button>
+            <button class="tab active" data-view="preview" type="button" aria-keyshortcuts="1">Traffic</button>
+            <button class="tab" data-view="traces" type="button" aria-keyshortcuts="2">Spans</button>
+            <button class="tab" data-view="metrics" type="button" aria-keyshortcuts="3">Metrics</button>
+            <button class="tab" data-view="logs" type="button" aria-keyshortcuts="4">Logs</button>
+            <button class="tab" data-view="map" type="button" aria-keyshortcuts="5">Map</button>
+            <button class="tab" data-view="raw" type="button" aria-keyshortcuts="6">Raw</button>
           </div>
 
           <section class="view active" id="view-preview" aria-label="Traffic preview">
@@ -115,6 +118,37 @@
         </div>
       </section>
     </main>
+
+    <div id="shortcut-help" class="modal-backdrop" hidden>
+      <section
+        class="shortcut-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="shortcut-help-title"
+        aria-describedby="shortcut-help-summary"
+        tabindex="-1"
+      >
+        <header class="shortcut-modal-head">
+          <div>
+            <h2 id="shortcut-help-title">Keyboard Shortcuts</h2>
+            <p id="shortcut-help-summary">Global shortcuts pause while focus is in the editor or a form field. Press Esc to leave that field.</p>
+          </div>
+          <button id="shortcut-help-close" class="icon-button" type="button" aria-label="Close keyboard shortcuts">
+            <span aria-hidden="true">x</span>
+          </button>
+        </header>
+        <dl class="shortcut-list">
+          <div><dt><kbd>?</kbd></dt><dd>Open this shortcut list</dd></div>
+          <div><dt><kbd>Esc</kbd></dt><dd>Close help or clear the output filter</dd></div>
+          <div><dt><kbd>Cmd/Ctrl</kbd><kbd>Enter</kbd></dt><dd>Run topology</dd></div>
+          <div><dt><kbd>Cmd/Ctrl</kbd><kbd>Shift</kbd><kbd>Enter</kbd></dt><dd>Validate topology</dd></div>
+          <div><dt><kbd>Cmd/Ctrl</kbd><kbd>S</kbd></dt><dd>Save topology YAML</dd></div>
+          <div><dt><kbd>Cmd/Ctrl</kbd><kbd>O</kbd></dt><dd>Load topology YAML</dd></div>
+          <div><dt><kbd>Cmd/Ctrl</kbd><kbd>K</kbd><span>or</span><kbd>/</kbd></dt><dd>Focus output filter</dd></div>
+          <div><dt><kbd>1</kbd><span>to</span><kbd>6</kbd></dt><dd>Switch result tabs</dd></div>
+        </dl>
+      </section>
+    </div>
 
     <script src="./vendor/p5/p5.min.js"></script>
     <script src="./wasm_exec.js"></script>

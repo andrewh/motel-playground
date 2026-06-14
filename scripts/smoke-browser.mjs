@@ -127,6 +127,54 @@ try {
     throw new Error(`static-rate preview did not expose forecast details: ${JSON.stringify(runtimeState)}`);
   }
 
+  await dispatchShortcut(client, { key: "?" });
+  const openHelp = await waitFor(async () => {
+    const state = await evaluate(client, `(${shortcutHelpState})()`);
+    return state.open && state.focusedDialog && state.text.includes("Run topology") ? state : false;
+  }, "shortcut help opened");
+  if (!openHelp.text.includes("Cmd/Ctrl") || !openHelp.text.includes("Switch result tabs")) {
+    throw new Error(`shortcut help did not document expected commands: ${JSON.stringify(openHelp)}`);
+  }
+  await dispatchShortcut(client, { key: "Escape" });
+  const closedHelp = await waitFor(async () => {
+    const state = await evaluate(client, `(${shortcutHelpState})()`);
+    return !state.open && state.focusedHelpButton ? state : false;
+  }, "shortcut help closed");
+  if (!closedHelp.focusedHelpButton) {
+    throw new Error(`shortcut help did not restore focus: ${JSON.stringify(closedHelp)}`);
+  }
+  await evaluate(client, `document.querySelector("#editor").focus()`);
+  await dispatchShortcut(client, { key: "?", selector: "#editor" });
+  const ignoredEditorHelp = await evaluate(client, `(${shortcutHelpState})()`);
+  if (ignoredEditorHelp.open) {
+    throw new Error(`shortcut help opened while typing in editor: ${JSON.stringify(ignoredEditorHelp)}`);
+  }
+  await dispatchShortcut(client, { key: "k", ctrlKey: true, selector: "#editor" });
+  const editorKeptFocus = await evaluate(client, `document.activeElement?.id === "editor"`);
+  if (!editorKeptFocus) {
+    throw new Error("filter shortcut fired while typing in the editor");
+  }
+  await dispatchShortcut(client, { key: "Escape", selector: "#editor" });
+  const editorBlurred = await waitFor(async () => evaluate(client, `document.activeElement?.id !== "editor"`), "editor escape blur");
+  if (!editorBlurred) {
+    throw new Error("Escape did not leave the editor field");
+  }
+  await evaluate(client, `document.querySelector("#shortcut-help-button").focus()`);
+  await dispatchShortcut(client, { key: "k", ctrlKey: true });
+  const filterFocused = await waitFor(async () => evaluate(client, `document.activeElement?.id === "result-filter"`), "filter shortcut focus");
+  if (!filterFocused) {
+    throw new Error("filter shortcut did not focus the output filter");
+  }
+  await evaluate(client, `document.querySelector("#result-filter").value = "gateway"`);
+  await dispatchShortcut(client, { key: "Escape", selector: "#result-filter" });
+  const filterEscaped = await waitFor(async () => evaluate(client, `(() => {
+    const input = document.querySelector("#result-filter");
+    return document.activeElement !== input && input.value === "";
+  })()`), "filter escape clear and blur");
+  if (!filterEscaped) {
+    throw new Error("Escape did not clear and leave the output filter");
+  }
+
   await evaluate(client, `document.querySelector("[data-view='map']").click()`);
   const mapState = await waitFor(async () => {
     const state = await evaluate(client, `(${mapRenderState})()`);
@@ -410,6 +458,23 @@ async function setResultFilter(client, value) {
   `);
 }
 
+async function dispatchShortcut(client, { key, ctrlKey = false, metaKey = false, shiftKey = false, altKey = false, selector = "document" }) {
+  await evaluate(client, `
+    (() => {
+      const target = ${selector === "document" ? "document" : `document.querySelector(${JSON.stringify(selector)})`};
+      target.dispatchEvent(new KeyboardEvent("keydown", {
+        key: ${JSON.stringify(key)},
+        ctrlKey: ${JSON.stringify(ctrlKey)},
+        metaKey: ${JSON.stringify(metaKey)},
+        shiftKey: ${JSON.stringify(shiftKey)},
+        altKey: ${JSON.stringify(altKey)},
+        bubbles: true,
+        cancelable: true,
+      }));
+    })()
+  `);
+}
+
 async function generateDifferentTopology(client, previousValue) {
   await evaluate(client, `document.querySelector("#generate-button").click()`);
   return waitFor(async () => {
@@ -425,6 +490,16 @@ async function generateDifferentTopology(client, previousValue) {
       ? snapshot
       : false;
   }, "random topology changed");
+}
+
+function shortcutHelpState() {
+  const help = document.querySelector("#shortcut-help");
+  return {
+    open: !help.hidden,
+    focusedDialog: document.activeElement === document.querySelector(".shortcut-modal"),
+    focusedHelpButton: document.activeElement === document.querySelector("#shortcut-help-button"),
+    text: help.textContent,
+  };
 }
 
 function mapRenderState() {

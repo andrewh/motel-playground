@@ -111,6 +111,10 @@ const els = {
   editor: document.querySelector("#editor"),
   status: document.querySelector("#runtime-status"),
   theme: document.querySelector("#theme-toggle"),
+  shortcutHelp: document.querySelector("#shortcut-help"),
+  shortcutHelpPanel: document.querySelector("#shortcut-help .shortcut-modal"),
+  shortcutHelpButton: document.querySelector("#shortcut-help-button"),
+  shortcutHelpClose: document.querySelector("#shortcut-help-close"),
   file: document.querySelector("#topology-file"),
   load: document.querySelector("#load-button"),
   save: document.querySelector("#save-button"),
@@ -139,21 +143,18 @@ const els = {
   },
 };
 
+const resultTabs = Array.from(document.querySelectorAll(".tab"));
+let lastShortcutFocus = null;
+
 els.editor.value = sampleTopology;
 clearMap(emptyCopy.map);
 clearSignalOutput();
 
 initTheme();
 
-for (const tab of document.querySelectorAll(".tab")) {
+for (const tab of resultTabs) {
   tab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((item) => item.classList.remove("active"));
-    document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
-    tab.classList.add("active");
-    document.querySelector(`#view-${tab.dataset.view}`).classList.add("active");
-    if (tab.dataset.view === "map" && state.currentTopology) {
-      renderMap(state.currentTopology, state.lastRun?.spans ?? []);
-    }
+    activateTab(tab);
   });
 }
 
@@ -163,6 +164,16 @@ els.theme.addEventListener("click", () => {
   localStorage.setItem("motel-playground-theme", next);
   if (state.currentTopology) renderMap(state.currentTopology, state.lastRun?.spans ?? []);
 });
+
+els.shortcutHelpButton.addEventListener("click", () => openShortcutHelp());
+els.shortcutHelpClose.addEventListener("click", () => closeShortcutHelp());
+els.shortcutHelp.addEventListener("click", (event) => {
+  if (event.target === els.shortcutHelp) closeShortcutHelp();
+});
+els.shortcutHelpPanel.addEventListener("keydown", (event) => {
+  if (event.key === "Tab") trapShortcutHelpFocus(event);
+});
+document.addEventListener("keydown", handleGlobalShortcut);
 
 els.validate.addEventListener("click", () => validate());
 els.run.addEventListener("click", () => run());
@@ -193,6 +204,144 @@ els.editor.addEventListener("input", () => {
 
 syncControls();
 loadWasm();
+
+function activateTab(tab) {
+  resultTabs.forEach((item) => item.classList.remove("active"));
+  document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
+  tab.classList.add("active");
+  document.querySelector(`#view-${tab.dataset.view}`).classList.add("active");
+  if (tab.dataset.view === "map" && state.currentTopology) {
+    renderMap(state.currentTopology, state.lastRun?.spans ?? []);
+  }
+}
+
+function handleGlobalShortcut(event) {
+  if (event.defaultPrevented || event.isComposing) return;
+  if (isShortcutHelpOpen()) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeShortcutHelp();
+    }
+    return;
+  }
+
+  const commandKey = event.metaKey || event.ctrlKey;
+  const typing = isTextEntryTarget(event.target);
+  const key = event.key.toLowerCase();
+
+  if (event.key === "Escape") {
+    if (typing) {
+      event.preventDefault();
+      if (document.activeElement === els.resultFilter && els.resultFilter.value) {
+        els.resultFilter.value = "";
+        els.resultFilter.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    }
+    return;
+  }
+
+  if (typing) return;
+
+  if (commandKey && !event.altKey && key === "s") {
+    event.preventDefault();
+    if (!els.save.disabled) saveTopology();
+    return;
+  }
+
+  if (commandKey && !event.altKey && key === "o") {
+    event.preventDefault();
+    if (!els.load.disabled) els.file.click();
+    return;
+  }
+
+  if (commandKey && !event.altKey && event.key === "Enter") {
+    event.preventDefault();
+    if (event.shiftKey) {
+      if (!els.validate.disabled) validate();
+    } else if (!els.run.disabled) {
+      run();
+    }
+    return;
+  }
+
+  if (commandKey && !event.altKey && key === "k") {
+    event.preventDefault();
+    focusResultFilter();
+    return;
+  }
+
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+  if (event.key === "?") {
+    event.preventDefault();
+    openShortcutHelp();
+    return;
+  }
+
+  if (event.key === "/") {
+    event.preventDefault();
+    focusResultFilter();
+    return;
+  }
+
+  if (/^[1-6]$/.test(event.key)) {
+    event.preventDefault();
+    activateTab(resultTabs[Number(event.key) - 1]);
+  }
+}
+
+function isTextEntryTarget(target) {
+  if (!(target instanceof Element)) return false;
+  if (target.closest('[contenteditable="true"]')) return true;
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
+
+function focusResultFilter() {
+  els.resultFilter.focus({ preventScroll: true });
+  els.resultFilter.select();
+}
+
+function openShortcutHelp() {
+  if (isShortcutHelpOpen()) return;
+  lastShortcutFocus = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+    ? document.activeElement
+    : els.shortcutHelpButton;
+  els.shortcutHelp.hidden = false;
+  document.body.classList.add("modal-open");
+  requestAnimationFrame(() => els.shortcutHelpPanel.focus({ preventScroll: true }));
+}
+
+function closeShortcutHelp() {
+  if (!isShortcutHelpOpen()) return;
+  els.shortcutHelp.hidden = true;
+  document.body.classList.remove("modal-open");
+  const target = lastShortcutFocus?.isConnected ? lastShortcutFocus : els.shortcutHelpButton;
+  lastShortcutFocus = null;
+  target.focus({ preventScroll: true });
+}
+
+function isShortcutHelpOpen() {
+  return !els.shortcutHelp.hidden;
+}
+
+function trapShortcutHelpFocus(event) {
+  const focusable = Array.from(els.shortcutHelpPanel.querySelectorAll(
+    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+  )).filter((item) => !item.disabled && item.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
 
 function initTheme() {
   const stored = localStorage.getItem("motel-playground-theme");
