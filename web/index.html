@@ -76,11 +76,14 @@
               Filter output
               <input id="result-filter" type="search" autocomplete="off" placeholder="service, attribute, trace" aria-keyshortcuts="Meta+K Control+K /" />
             </label>
-            <div class="result-actions" aria-label="Result file actions">
-              <input id="result-file" class="file-input" type="file" accept=".json,application/json" />
-              <button id="import-results-button" type="button">Import results</button>
-              <button id="export-results-button" type="button" disabled>Export results</button>
-              <button id="print-report-button" type="button" disabled>Print report</button>
+            <div class="result-actions" aria-labelledby="result-actions-label">
+              <span id="result-actions-label" class="field-label">Results</span>
+              <div class="result-action-buttons">
+                <input id="result-file" class="file-input" type="file" accept=".json,application/json" />
+                <button id="import-results-button" type="button">Import</button>
+                <button id="export-results-button" type="button" disabled>Export</button>
+                <button id="print-report-button" type="button" disabled>Print</button>
+              </div>
             </div>
           </div>
 
