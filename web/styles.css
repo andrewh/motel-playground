@@ -653,7 +653,7 @@ textarea {
 .signal-selector {
   display: grid;
   gap: var(--space-2);
-  min-width: 208px;
+  min-width: 204px;
   margin: 0;
   padding: 0;
   border: 0;
@@ -668,22 +668,76 @@ textarea {
   text-transform: uppercase;
 }
 
-.signal-selector label {
+.signal-options {
+  display: inline-flex;
+  align-items: stretch;
+  overflow: hidden;
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.signal-options label {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  min-height: 24px;
+  justify-content: center;
+  flex: 1 1 0;
+  min-height: 36px;
+  padding: 0 var(--space-2);
+  border-left: 1px solid var(--line);
   color: var(--muted-strong);
   font-size: 0.82rem;
   font-weight: 560;
   text-transform: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 150ms var(--ease-out),
+    color 150ms var(--ease-out);
 }
 
-.signal-selector input {
-  width: 16px;
-  height: 16px;
+.signal-options label:first-child {
+  border-left: 0;
+}
+
+.signal-options label:has(input:checked) {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.signal-options input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   padding: 0;
-  accent-color: var(--ink);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.signal-options input:focus-visible {
+  outline: none;
+}
+
+.signal-options label:has(input:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
+}
+
+@media (hover: hover) {
+  .signal-options label:hover {
+    color: var(--ink);
+    background: color-mix(in oklch, var(--surface), var(--ink) 6%);
+  }
+
+  .signal-options label:has(input:checked):hover {
+    background: var(--ink);
+    color: var(--bg);
+  }
 }
 
 .result-actions {
