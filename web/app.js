@@ -160,6 +160,7 @@ const els = {
   validate: document.querySelector("#validate-button"),
   run: document.querySelector("#run-button"),
   duration: document.querySelector("#duration"),
+  slowThreshold: document.querySelector("#slow-threshold"),
   maxNodes: document.querySelector("#max-nodes"),
   seed: document.querySelector("#seed"),
   signals: {
@@ -512,6 +513,7 @@ function applySharePayload(payload) {
   clearRawOutput();
   clearMap(emptyCopy.map);
   applyNumberInput(els.duration, payload.settings?.duration);
+  applyNumberInput(els.slowThreshold, payload.settings?.slowThresholdMs);
   applyNumberInput(els.seed, payload.settings?.seed);
   applyNumberInput(els.maxNodes, payload.settings?.maxNodes);
   applySignalSettings(payload.settings?.signals);
@@ -705,6 +707,7 @@ async function run() {
       duration: Number(els.duration.value),
       seed: Number(els.seed.value),
       signals: settings.signals,
+      slowThresholdMs: Number(settings.slowThresholdMs),
     }));
     if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
     renderRun(result, { topology, settings });
@@ -836,6 +839,7 @@ function makeCurrentResultSnapshot() {
 async function applyResultSnapshot(snapshot) {
   setTopologyValue(snapshot.topology);
   applyNumberInput(els.duration, snapshot.settings.duration);
+  applyNumberInput(els.slowThreshold, snapshot.settings.slowThresholdMs);
   applyNumberInput(els.seed, snapshot.settings.seed);
   applyNumberInput(els.maxNodes, snapshot.settings.maxNodes);
   applySignalSettings(snapshot.settings.signals);
@@ -861,6 +865,7 @@ async function applyResultSnapshot(snapshot) {
 function currentRunSettings() {
   return {
     duration: els.duration.value,
+    slowThresholdMs: els.slowThreshold.value,
     seed: els.seed.value,
     maxNodes: els.maxNodes.value,
     signals: currentSignalSettings(),
@@ -898,6 +903,7 @@ function renderPrintableReport(snapshot) {
       <dl class="report-meta">
         <div><dt>Generated</dt><dd>${escapeHtml(reportDate(generatedAt))}</dd></div>
         <div><dt>Duration</dt><dd>${escapeHtml(snapshot.settings.duration)}s</dd></div>
+        <div><dt>Slow threshold</dt><dd>${escapeHtml(snapshot.settings.slowThresholdMs)}ms</dd></div>
         <div><dt>Seed</dt><dd>${escapeHtml(snapshot.settings.seed)}</dd></div>
       </dl>
     </header>
@@ -912,6 +918,7 @@ function renderPrintableReport(snapshot) {
     ${reportSection("Topology map", renderReportMap(topology), "report-map-section")}
     ${reportSection("Run parameters", renderReportFacts([
       ["duration", `${snapshot.settings.duration}s`],
+      ["slow threshold", `${snapshot.settings.slowThresholdMs}ms`],
       ["seed", snapshot.settings.seed],
       ["max nodes", snapshot.settings.maxNodes],
       ["captured spans", result.limits.captured_spans],
@@ -1806,7 +1813,7 @@ function statusLabel() {
 function runClient() {
   if (!window.Worker) {
     return {
-      run: ({ topology, duration, seed, signals }) => window.motelRun(topology, duration, seed, signals),
+      run: ({ topology, duration, seed, signals, slowThresholdMs }) => window.motelRun(topology, duration, seed, signals, slowThresholdMs),
     };
   }
   if (!state.runner) {

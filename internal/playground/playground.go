@@ -371,12 +371,16 @@ func Validate(source string) ValidationResult {
 	}
 }
 
-func Run(source string, duration time.Duration, seed uint64, signals RunSignals) RunResult {
+func Run(source string, duration time.Duration, seed uint64, signals RunSignals, slowThresholds ...time.Duration) RunResult {
 	if duration <= 0 {
 		duration = defaultDuration
 	}
 	if duration > maxDuration {
 		duration = maxDuration
+	}
+	slowThreshold := time.Duration(0)
+	if len(slowThresholds) > 0 {
+		slowThreshold = slowThresholds[0]
 	}
 
 	cfg, topo, scenarios, err := load(source)
@@ -434,7 +438,7 @@ func Run(source string, duration time.Duration, seed uint64, signals RunSignals)
 	if signals.Logs {
 		logCapture = newLogCapture(topo)
 		defer logCapture.Shutdown()
-		logObserver, err := synth.NewLogObserver(logCapture.Loggers, topo, 0, rand.New(rand.NewPCG(seed^0x8ebc6af09c88c6e3, seed^0x589965cc75374cc3)))
+		logObserver, err := synth.NewLogObserver(logCapture.Loggers, topo, slowThreshold, rand.New(rand.NewPCG(seed^0x8ebc6af09c88c6e3, seed^0x589965cc75374cc3)))
 		if err != nil {
 			return RunResult{
 				OK:       false,

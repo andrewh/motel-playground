@@ -6,6 +6,7 @@ const defaultDurationSetting = "1";
 const defaultMaxNodesSetting = "8";
 const defaultSeedSetting = "42";
 const defaultSignalSetting = true;
+const defaultSlowThresholdSetting = "0";
 const filenameFallbackToken = "run";
 const filenameUnsafePattern = /[^a-z0-9_-]+/gi;
 const requiredStatsFields = ["traces", "spans", "errors", "error_rate"];
@@ -90,6 +91,7 @@ function normalizeSettings(settings = {}) {
   const source = isRecord(settings) ? settings : {};
   return {
     duration: stringSetting(source.duration, defaultDurationSetting),
+    slowThresholdMs: stringSetting(source.slowThresholdMs, defaultSlowThresholdSetting),
     seed: stringSetting(source.seed, defaultSeedSetting),
     maxNodes: stringSetting(source.maxNodes, defaultMaxNodesSetting),
     signals: normalizeSignals(source.signals),
