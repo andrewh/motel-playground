@@ -19,13 +19,37 @@ func main() {
 	js.Global().Set("motelRun", async(func(args []js.Value) (string, error) {
 		duration := secondsArg(args, 1, 1)
 		seed := uint64(numberArg(args, 2, 1))
-		return playground.ToJSON(playground.Run(args[0].String(), duration, seed)), nil
+		signals := runSignalsArg(args, 3)
+		return playground.ToJSON(playground.Run(args[0].String(), duration, seed, signals)), nil
 	}))
 	js.Global().Set("motelPreview", async(func(args []js.Value) (string, error) {
 		duration := secondsArg(args, 1, 300)
 		return playground.Preview(args[0].String(), duration)
 	}))
 	<-done
+}
+
+func runSignalsArg(args []js.Value, index int) playground.RunSignals {
+	signals := playground.DefaultRunSignals()
+	if len(args) <= index {
+		return signals
+	}
+	value := args[index]
+	if value.IsUndefined() || value.IsNull() || value.Type() != js.TypeObject {
+		return signals
+	}
+	signals.Traces = boolProperty(value, "traces", signals.Traces)
+	signals.Metrics = boolProperty(value, "metrics", signals.Metrics)
+	signals.Logs = boolProperty(value, "logs", signals.Logs)
+	return signals
+}
+
+func boolProperty(value js.Value, name string, fallback bool) bool {
+	property := value.Get(name)
+	if property.Type() != js.TypeBoolean {
+		return fallback
+	}
+	return property.Bool()
 }
 
 type asyncFunc func(args []js.Value) (string, error)

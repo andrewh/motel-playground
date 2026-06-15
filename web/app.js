@@ -162,6 +162,11 @@ const els = {
   duration: document.querySelector("#duration"),
   maxNodes: document.querySelector("#max-nodes"),
   seed: document.querySelector("#seed"),
+  signals: {
+    traces: document.querySelector("#run-signal-traces"),
+    metrics: document.querySelector("#run-signal-metrics"),
+    logs: document.querySelector("#run-signal-logs"),
+  },
   resultFilter: document.querySelector("#result-filter"),
   preview: document.querySelector("#preview"),
   traces: document.querySelector("#traces"),
@@ -471,11 +476,7 @@ async function copyShareURL() {
 function buildShareURL() {
   return makeShareURL(window.location.href, {
     topology: getTopologyValue(),
-    settings: {
-      duration: els.duration.value,
-      seed: els.seed.value,
-      maxNodes: els.maxNodes.value,
-    },
+    settings: currentRunSettings(),
     filters: {
       result: els.resultFilter.value,
       errorTracesOnly: state.errorTracesOnly,
@@ -513,6 +514,7 @@ function applySharePayload(payload) {
   applyNumberInput(els.duration, payload.settings?.duration);
   applyNumberInput(els.seed, payload.settings?.seed);
   applyNumberInput(els.maxNodes, payload.settings?.maxNodes);
+  applySignalSettings(payload.settings?.signals);
   els.resultFilter.value = typeof payload.filters?.result === "string" ? payload.filters.result : "";
   state.resultFilter = els.resultFilter.value.trim().toLowerCase();
   state.errorTracesOnly = Boolean(payload.filters?.errorTracesOnly);
@@ -529,6 +531,30 @@ function applyNumberInput(input, value) {
   const min = finiteInputBound(input.min, -Infinity);
   const max = finiteInputBound(input.max, Infinity);
   input.value = String(Math.min(max, Math.max(min, numericValue)));
+}
+
+function currentSignalSettings() {
+  return {
+    traces: els.signals.traces.checked,
+    metrics: els.signals.metrics.checked,
+    logs: els.signals.logs.checked,
+  };
+}
+
+function applySignalSettings(signals = {}) {
+  const next = normalizeSignalSettings(signals);
+  els.signals.traces.checked = next.traces;
+  els.signals.metrics.checked = next.metrics;
+  els.signals.logs.checked = next.logs;
+}
+
+function normalizeSignalSettings(signals = {}) {
+  const source = signals && typeof signals === "object" ? signals : {};
+  return {
+    traces: source.traces !== false,
+    metrics: source.metrics !== false,
+    logs: source.logs !== false,
+  };
 }
 
 function finiteInputBound(value, fallback) {
@@ -678,6 +704,7 @@ async function run() {
       topology,
       duration: Number(els.duration.value),
       seed: Number(els.seed.value),
+      signals: settings.signals,
     }));
     if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
     renderRun(result, { topology, settings });
@@ -811,6 +838,7 @@ async function applyResultSnapshot(snapshot) {
   applyNumberInput(els.duration, snapshot.settings.duration);
   applyNumberInput(els.seed, snapshot.settings.seed);
   applyNumberInput(els.maxNodes, snapshot.settings.maxNodes);
+  applySignalSettings(snapshot.settings.signals);
   els.resultFilter.value = "";
   state.resultFilter = "";
   state.errorTracesOnly = false;
@@ -835,6 +863,7 @@ function currentRunSettings() {
     duration: els.duration.value,
     seed: els.seed.value,
     maxNodes: els.maxNodes.value,
+    signals: currentSignalSettings(),
   };
 }
 
@@ -1115,6 +1144,7 @@ function renderRun(result, source = { topology: getTopologyValue(), settings: cu
     return;
   }
   const stats = result.stats;
+  const signals = normalizeSignalSettings(result.signals);
   state.lastRun = result;
   state.lastRunSource = source;
   state.currentTopology = result.topology;
@@ -1125,9 +1155,9 @@ function renderRun(result, source = { topology: getTopologyValue(), settings: cu
   if (stats.errors > capturedErrors) {
     els.summary.textContent = `${stats.traces} traces, ${stats.spans} spans, ${stats.errors} errors (${capturedErrors} captured)`;
   }
-  renderSpans(result.spans ?? []);
-  renderMetrics(result.metrics ?? []);
-  renderLogs(result.logs ?? []);
+  renderSpans(result.spans ?? [], { enabled: signals.traces });
+  renderMetrics(result.metrics ?? [], { enabled: signals.metrics });
+  renderLogs(result.logs ?? [], { enabled: signals.logs });
   renderMap(result.topology, result.spans ?? []);
   syncControls();
 }
@@ -1147,7 +1177,11 @@ function renderRunWorkerError(error) {
   syncControls();
 }
 
-function renderMetrics(metrics) {
+function renderMetrics(metrics, { enabled = true } = {}) {
+  if (!enabled) {
+    els.signalMetrics.innerHTML = `<p class="empty">Metrics disabled for this run.</p>`;
+    return;
+  }
   const filter = resultFilter();
   const ordered = metrics.slice().sort(compareSignals);
   const visible = filter ? ordered.filter((metric) => signalMatchesFilter(metric, filter)) : ordered;
@@ -1196,7 +1230,12 @@ function renderMetricDetails(metric) {
   </dl>` : `<p class="empty span-empty">No metric attributes.</p>`}`;
 }
 
-function renderLogs(logs) {
+function renderLogs(logs, { enabled = true } = {}) {
+  if (!enabled) {
+    syncLogFilter(0, 0);
+    els.signalLogs.innerHTML = `<p class="empty">Logs disabled for this run.</p>`;
+    return;
+  }
   const filter = resultFilter();
   const ordered = logs.slice().sort(compareSignals);
   const notableCount = ordered.filter((log) => isNotableLog(log)).length;
@@ -1249,7 +1288,12 @@ function renderLogDetails(log) {
   </dl>` : `<p class="empty span-empty">No log attributes.</p>`}`;
 }
 
-function renderSpans(spans) {
+function renderSpans(spans, { enabled = true } = {}) {
+  if (!enabled) {
+    syncSpanFilter(0, 0);
+    els.traces.innerHTML = `<p class="empty">Traces disabled for this run.</p>`;
+    return;
+  }
   const filter = resultFilter();
   const orderedSpans = spans
     .slice()
@@ -1628,9 +1672,10 @@ function renderFilteredResults() {
     syncLogFilter(0, 0);
     return;
   }
-  renderSpans(state.lastRun.spans ?? []);
-  renderMetrics(state.lastRun.metrics ?? []);
-  renderLogs(state.lastRun.logs ?? []);
+  const signals = normalizeSignalSettings(state.lastRun.signals);
+  renderSpans(state.lastRun.spans ?? [], { enabled: signals.traces });
+  renderMetrics(state.lastRun.metrics ?? [], { enabled: signals.metrics });
+  renderLogs(state.lastRun.logs ?? [], { enabled: signals.logs });
 }
 
 function resultFilter() {
@@ -1761,7 +1806,7 @@ function statusLabel() {
 function runClient() {
   if (!window.Worker) {
     return {
-      run: ({ topology, duration, seed }) => window.motelRun(topology, duration, seed),
+      run: ({ topology, duration, seed, signals }) => window.motelRun(topology, duration, seed, signals),
     };
   }
   if (!state.runner) {

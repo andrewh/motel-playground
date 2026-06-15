@@ -312,6 +312,7 @@ try {
   await evaluate(client, `document.querySelector("#duration").value = "2.5"`);
   await evaluate(client, `document.querySelector("#seed").value = "314"`);
   await evaluate(client, `document.querySelector("#max-nodes").value = "4"`);
+  await setSignalControls(client, { traces: true, metrics: false, logs: true });
   await setResultFilter(client, "gateway");
   await evaluate(client, `document.querySelector("[data-view='logs']").click()`);
   await evaluate(client, `document.querySelector("#share-button").click()`);
@@ -333,6 +334,9 @@ try {
       && state.duration === "2.5"
       && state.seed === "314"
       && state.maxNodes === "4"
+      && state.signals.traces === true
+      && state.signals.metrics === false
+      && state.signals.logs === true
       && state.filter === "gateway"
       && state.activeView === "logs"
       ? state
@@ -363,6 +367,7 @@ try {
 
   await setEditorValue(client, sampleTopology);
   await setResultFilter(client, "");
+  await setSignalControls(client, { traces: true, metrics: true, logs: true });
   await evaluate(client, `document.querySelector("[data-view='preview']").click()`);
   await evaluate(client, `document.querySelector("#duration").value = "1"`);
   await evaluate(client, `document.querySelector("#seed").value = "42"`);
@@ -425,6 +430,9 @@ try {
     || exportedResults.spans < 1
     || exportedResults.metrics < 1
     || exportedResults.logs < 1
+    || exportedResults.signals?.traces !== true
+    || exportedResults.signals?.metrics !== true
+    || exportedResults.signals?.logs !== true
     || !exportedResults.topology.includes("gateway.request.duration")
   ) {
     throw new Error(`result export did not include the full run: ${JSON.stringify(exportedResults)}`);
@@ -444,6 +452,9 @@ try {
     !importedResults.topologyRestored
     || importedResults.duration !== "1"
     || importedResults.seed !== "42"
+    || importedResults.signals.traces !== true
+    || importedResults.signals.metrics !== true
+    || importedResults.signals.logs !== true
     || importedResults.traces < 1
     || importedResults.metrics < 1
     || importedResults.logs < 1
@@ -520,6 +531,22 @@ try {
     throw new Error(`span attribute filter did not expose matching span: ${JSON.stringify(attributeFilter)}`);
   }
   await setResultFilter(client, "");
+
+  await setSignalControls(client, { traces: false, metrics: false, logs: false });
+  await evaluate(client, `document.querySelector("#run-button").click()`);
+  const disabledSignals = await waitFor(async () => {
+    const state = await evaluate(client, `(${disabledSignalState})()`);
+    return state.statsSpans > 0
+      && state.tracesDisabled
+      && state.metricsDisabled
+      && state.logsDisabled
+      ? state
+      : false;
+  }, "disabled signal run rendered");
+  if (disabledSignals.traceRows || disabledSignals.metricRows || disabledSignals.logRows) {
+    throw new Error(`disabled signal run still rendered signal rows: ${JSON.stringify(disabledSignals)}`);
+  }
+  await setSignalControls(client, { traces: true, metrics: true, logs: true });
 
   await setEditorValue(client, erroredTopology);
   await evaluate(client, `document.querySelector("#validate-button").click()`);
@@ -692,7 +719,8 @@ async function evaluate(client, expression) {
     returnByValue: true,
   });
   if (response.exceptionDetails) {
-    throw new Error(response.exceptionDetails.text || "Runtime.evaluate failed");
+    const details = response.exceptionDetails;
+    throw new Error(details.exception?.description || details.text || "Runtime.evaluate failed");
   }
   return response.result.value;
 }
@@ -718,6 +746,19 @@ async function setResultFilter(client, value) {
       const input = document.querySelector("#result-filter");
       input.value = ${JSON.stringify(value)};
       input.dispatchEvent(new Event("input", { bubbles: true }));
+    })()
+  `);
+}
+
+async function setSignalControls(client, signals) {
+  await evaluate(client, `
+    (() => {
+      const signals = ${JSON.stringify(signals)};
+      for (const [name, enabled] of Object.entries(signals)) {
+        const input = document.querySelector(\`#run-signal-\${name}\`);
+        input.checked = enabled;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
     })()
   `);
 }
@@ -884,6 +925,7 @@ function shareCopyState() {
 }
 
 function shareRestoreState() {
+  const checked = (selector) => document.querySelector(selector)?.checked ?? null;
   return {
     ready: document.querySelector("#runtime-status")?.textContent === "Runtime ready",
     preview: Boolean(document.querySelector("#preview svg")),
@@ -891,6 +933,11 @@ function shareRestoreState() {
     duration: document.querySelector("#duration").value,
     seed: document.querySelector("#seed").value,
     maxNodes: document.querySelector("#max-nodes").value,
+    signals: {
+      traces: checked("#run-signal-traces"),
+      metrics: checked("#run-signal-metrics"),
+      logs: checked("#run-signal-logs"),
+    },
     filter: document.querySelector("#result-filter").value,
     activeView: document.querySelector(".tab.active")?.dataset.view,
     path: window.location.pathname,
@@ -946,6 +993,7 @@ async function resultDownloadState() {
     text,
     kind: json?.kind,
     seed: json?.settings?.seed,
+    signals: json?.settings?.signals,
     topology: json?.topology || "",
     traces: json?.result?.stats?.traces ?? 0,
     spans: json?.result?.stats?.spans ?? 0,
@@ -957,12 +1005,18 @@ async function resultDownloadState() {
 }
 
 function resultImportState() {
+  const checked = (selector) => document.querySelector(selector)?.checked ?? null;
   return {
     ready: document.querySelector("#share-status").textContent.includes("Imported")
       && document.querySelector("#summary-line").textContent.includes("Imported run"),
     topologyRestored: window.motelPlayground?.getTopology().includes("gateway.request.duration"),
     duration: document.querySelector("#duration").value,
     seed: document.querySelector("#seed").value,
+    signals: {
+      traces: checked("#run-signal-traces"),
+      metrics: checked("#run-signal-metrics"),
+      logs: checked("#run-signal-logs"),
+    },
     traces: Number(document.querySelector("#metric-traces").textContent),
     spans: Number(document.querySelector("#metric-spans").textContent),
     metrics: document.querySelectorAll("#signal-metrics .signal-item").length,
@@ -1038,6 +1092,24 @@ function signalTabState(kind) {
   return {
     rows: root.querySelectorAll(".signal-item").length,
     text: root.textContent,
+  };
+}
+
+function disabledSignalState() {
+  const checked = (selector) => document.querySelector(selector)?.checked ?? null;
+  return {
+    statsSpans: Number(document.querySelector("#metric-spans").textContent),
+    tracesDisabled: document.querySelector("#traces").textContent.includes("Traces disabled"),
+    metricsDisabled: document.querySelector("#signal-metrics").textContent.includes("Metrics disabled"),
+    logsDisabled: document.querySelector("#signal-logs").textContent.includes("Logs disabled"),
+    traceRows: document.querySelectorAll("#traces .trace-group").length,
+    metricRows: document.querySelectorAll("#signal-metrics .signal-item").length,
+    logRows: document.querySelectorAll("#signal-logs .signal-item").length,
+    controls: {
+      traces: checked("#run-signal-traces"),
+      metrics: checked("#run-signal-metrics"),
+      logs: checked("#run-signal-logs"),
+    },
   };
 }
 

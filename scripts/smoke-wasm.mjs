@@ -121,6 +121,20 @@ if (!fractionalRun.ok || Math.abs(fractionalRun.limits.duration_seconds - 0.5) >
   throw new Error(`fractional duration was not preserved: ${JSON.stringify(fractionalRun)}`);
 }
 
+const metricsOnlyRun = JSON.parse(await globalThis.motelRun(topology, 1, 7, { traces: false, metrics: true, logs: false }));
+if (
+  !metricsOnlyRun.ok
+  || metricsOnlyRun.signals?.traces !== false
+  || metricsOnlyRun.signals?.metrics !== true
+  || metricsOnlyRun.signals?.logs !== false
+  || metricsOnlyRun.stats.spans < 1
+  || metricsOnlyRun.spans?.length
+  || !metricsOnlyRun.metrics?.some((metric) => metric.name === "gateway.request.duration")
+  || metricsOnlyRun.logs?.length
+) {
+  throw new Error(`signal selection was not applied: ${JSON.stringify(metricsOnlyRun)}`);
+}
+
 for (const seed of [1, 42, 777, 2026]) {
   const generated = randomTopologyYaml(seed);
   if (
