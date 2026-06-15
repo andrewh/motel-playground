@@ -23,7 +23,6 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
 	"go.opentelemetry.io/otel/trace"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -68,37 +67,6 @@ type OperationSummary struct {
 	Duration  string   `json:"duration"`
 	ErrorRate string   `json:"error_rate,omitempty"`
 	Calls     []string `json:"calls,omitempty"`
-}
-
-type rawConfig struct {
-	Version   *int                        `yaml:"version"`
-	Services  map[string]rawServiceConfig `yaml:"services"`
-	Traffic   synth.TrafficConfig         `yaml:"traffic"`
-	Scenarios []synth.ScenarioConfig      `yaml:"scenarios,omitempty"`
-}
-
-type rawServiceConfig struct {
-	ResourceAttributes map[string]string             `yaml:"resource_attributes,omitempty"`
-	Attributes         map[string]string             `yaml:"attributes,omitempty"`
-	Metrics            []synth.MetricConfig          `yaml:"metrics,omitempty"`
-	Logs               []synth.LogConfig             `yaml:"logs,omitempty"`
-	Operations         map[string]rawOperationConfig `yaml:"operations"`
-}
-
-type rawOperationConfig struct {
-	Domain         string                                `yaml:"domain,omitempty"`
-	Duration       string                                `yaml:"duration"`
-	ErrorRate      string                                `yaml:"error_rate,omitempty"`
-	Calls          []synth.CallConfig                    `yaml:"calls,omitempty"`
-	CallStyle      string                                `yaml:"call_style,omitempty"`
-	Attributes     map[string]synth.AttributeValueConfig `yaml:"attributes,omitempty"`
-	Events         []synth.EventConfig                   `yaml:"events,omitempty"`
-	Links          []string                              `yaml:"links,omitempty"`
-	Metrics        []synth.MetricConfig                  `yaml:"metrics,omitempty"`
-	Logs           []synth.LogConfig                     `yaml:"logs,omitempty"`
-	QueueDepth     int                                   `yaml:"queue_depth,omitempty"`
-	Backpressure   *synth.BackpressureConfig             `yaml:"backpressure,omitempty"`
-	CircuitBreaker *synth.CircuitBreakerConfig           `yaml:"circuit_breaker,omitempty"`
 }
 
 type GraphData struct {
@@ -511,7 +479,7 @@ func Preview(source string, duration time.Duration) (string, error) {
 }
 
 func load(source string) (*synth.Config, *synth.Topology, []synth.Scenario, error) {
-	cfg, err := parseConfigBytes([]byte(source))
+	cfg, err := synth.ParseConfig([]byte(source))
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -527,72 +495,6 @@ func load(source string) (*synth.Config, *synth.Topology, []synth.Scenario, erro
 		return nil, nil, nil, err
 	}
 	return cfg, topo, scenarios, nil
-}
-
-func parseConfigBytes(data []byte) (*synth.Config, error) {
-	var raw rawConfig
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parsing config: %w", err)
-	}
-
-	if raw.Version == nil {
-		return nil, fmt.Errorf("missing required field: version (e.g. 'version: 1')")
-	}
-	if *raw.Version != synth.CurrentVersion {
-		return nil, fmt.Errorf("unsupported config version %d (supported: %d)", *raw.Version, synth.CurrentVersion)
-	}
-
-	cfg := &synth.Config{
-		Version:   *raw.Version,
-		Traffic:   raw.Traffic,
-		Scenarios: raw.Scenarios,
-	}
-
-	serviceNames := make([]string, 0, len(raw.Services))
-	for name := range raw.Services {
-		serviceNames = append(serviceNames, name)
-	}
-	sort.Strings(serviceNames)
-
-	for _, serviceName := range serviceNames {
-		rawSvc := raw.Services[serviceName]
-		svc := synth.ServiceConfig{
-			Name:               serviceName,
-			ResourceAttributes: rawSvc.ResourceAttributes,
-			Attributes:         rawSvc.Attributes,
-			Metrics:            rawSvc.Metrics,
-			Logs:               rawSvc.Logs,
-		}
-
-		operationNames := make([]string, 0, len(rawSvc.Operations))
-		for name := range rawSvc.Operations {
-			operationNames = append(operationNames, name)
-		}
-		sort.Strings(operationNames)
-
-		for _, operationName := range operationNames {
-			rawOp := rawSvc.Operations[operationName]
-			svc.Operations = append(svc.Operations, synth.OperationConfig{
-				Name:           operationName,
-				Domain:         rawOp.Domain,
-				Duration:       rawOp.Duration,
-				ErrorRate:      rawOp.ErrorRate,
-				Calls:          rawOp.Calls,
-				CallStyle:      rawOp.CallStyle,
-				Attributes:     rawOp.Attributes,
-				Events:         rawOp.Events,
-				Links:          rawOp.Links,
-				Metrics:        rawOp.Metrics,
-				Logs:           rawOp.Logs,
-				QueueDepth:     rawOp.QueueDepth,
-				Backpressure:   rawOp.Backpressure,
-				CircuitBreaker: rawOp.CircuitBreaker,
-			})
-		}
-		cfg.Services = append(cfg.Services, svc)
-	}
-
-	return cfg, nil
 }
 
 func summariseConfig(cfg *synth.Config, topo *synth.Topology) *TopologySummary {
