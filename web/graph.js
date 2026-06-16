@@ -7,10 +7,20 @@
   const SELF_LOOP_R = 22;
   const ZOOM_MIN = 0.3;
   const ZOOM_MAX = 4;
+  const ARROW_MARKER_LENGTH = 6;
+  const ARROW_MARKER_HALF_HEIGHT = 3;
+  const ARROW_MARKER_SIZE = 5;
+  const KEY_ARROW_VIEWBOX_WIDTH = 40;
+  const KEY_ARROW_VIEWBOX_HEIGHT = 8;
+  const KEY_ARROW_LINE_START_X = 1;
+  const KEY_ARROW_TIP_X = 36;
+  const KEY_ARROW_BASE_X = 30;
+  const KEY_ARROW_CENTER_Y = 4;
+  const KEY_ARROW_HALF_HEIGHT = 2;
 
   // Render the service topology as a d3-driven SVG network graph. Nodes keep the
   // layered col/row placement computed server-side; d3 handles the DOM join,
-  // link curves (d3-shape), pan/zoom (d3-zoom) and node dragging (d3-drag).
+  // link curves (d3-shape), and pan/zoom (d3-zoom).
   window.renderServiceMap = function renderServiceMap(container, graph, spans) {
     try {
       if (!window.d3) {
@@ -25,6 +35,7 @@
   };
 
   window.clearServiceMap = function clearServiceMap(container, message) {
+    clearGraphEvents(container);
     container.classList.remove("graph-map");
     container.innerHTML = `<p class="empty">${escapeHtml(message || "No service map available.")}</p>`;
   };
@@ -55,6 +66,7 @@
 
     const bounds = boundsOf(nodes, links);
 
+    clearGraphEvents(container);
     container.classList.add("graph-map");
     container.innerHTML = "";
     const root = d3.select(container);
@@ -68,15 +80,15 @@
 
     svg.append("defs").append("marker")
       .attr("id", "graph-arrow")
-      .attr("viewBox", "0 0 10 10")
-      .attr("refX", 9)
-      .attr("refY", 5)
-      .attr("markerWidth", 7)
-      .attr("markerHeight", 7)
-      .attr("orient", "auto-start-reverse")
+      .attr("viewBox", `0 ${-ARROW_MARKER_HALF_HEIGHT} ${ARROW_MARKER_LENGTH} ${ARROW_MARKER_HALF_HEIGHT * 2}`)
+      .attr("refX", ARROW_MARKER_LENGTH)
+      .attr("refY", 0)
+      .attr("markerWidth", ARROW_MARKER_SIZE)
+      .attr("markerHeight", ARROW_MARKER_SIZE)
+      .attr("orient", "auto")
       .append("path")
       .attr("class", "graph-arrowhead")
-      .attr("d", "M 0 0 L 10 5 L 0 10 z");
+      .attr("d", `M 0 ${-ARROW_MARKER_HALF_HEIGHT} L ${ARROW_MARKER_LENGTH} 0 L 0 ${ARROW_MARKER_HALF_HEIGHT} z`);
 
     const viewport = svg.append("g").attr("class", "graph-viewport");
     const linkGen = d3.linkHorizontal().x((d) => d.x).y((d) => d.y);
@@ -138,40 +150,38 @@
       linkSel.classed("is-active", false);
       tooltip.property("hidden", true);
     };
+    const dismissTooltip = (event) => {
+      if (event.target?.closest?.(".graph-node")) return;
+      deactivate();
+      if (container.contains(document.activeElement) && document.activeElement?.matches?.(".graph-node")) {
+        document.activeElement.blur();
+      }
+    };
+    document.addEventListener("pointerdown", dismissTooltip, true);
+    container.__graphCleanup = () => {
+      document.removeEventListener("pointerdown", dismissTooltip, true);
+      root.on(".zoom", null);
+      delete container.__zoom;
+    };
     nodeSel
       .on("pointerenter", function (event, node) { activate(node, this); })
       .on("pointerleave", deactivate)
       .on("focus", function (event, node) { activate(node, this); })
       .on("blur", deactivate);
 
-    // Dragging a node updates its position and re-routes its links live.
-    const drag = d3.drag()
-      .on("start", function (event) {
-        if (event.sourceEvent && event.sourceEvent.stopPropagation) event.sourceEvent.stopPropagation();
-        d3.select(this).raise().classed("is-dragging", true);
-      })
-      .on("drag", function (event, node) {
-        node.x = event.x;
-        node.y = event.y;
-        d3.select(this).attr("transform", `translate(${num(node.x)} ${num(node.y)})`);
-        linkSel.filter((link) => link.source === node || link.target === node).attr("d", linkPath);
-      })
-      .on("end", function () {
-        d3.select(this).classed("is-dragging", false);
-      });
-    nodeSel.call(drag);
-
     // Pan / zoom the whole viewport.
     const zoom = d3.zoom()
       .scaleExtent([ZOOM_MIN, ZOOM_MAX])
       .on("zoom", (event) => viewport.attr("transform", event.transform));
-    svg.call(zoom);
+    root.call(zoom);
 
     if (links.length) root.append("div").attr("class", "graph-key").attr("aria-hidden", "true").html(lineKeyMarkup());
   }
 
   function lineKeyMarkup() {
-    const sample = (extra, style) => `<svg viewBox="0 0 40 8" width="40" height="8" aria-hidden="true"><line x1="1" y1="4" x2="30" y2="4" class="graph-edge${extra}"${style ? ` style="${style}"` : ""}></line><polygon points="38,4 30,1.5 30,6.5" class="graph-key-arrow"></polygon></svg>`;
+    const top = KEY_ARROW_CENTER_Y - KEY_ARROW_HALF_HEIGHT;
+    const bottom = KEY_ARROW_CENTER_Y + KEY_ARROW_HALF_HEIGHT;
+    const sample = (extra, style) => `<svg viewBox="0 0 ${KEY_ARROW_VIEWBOX_WIDTH} ${KEY_ARROW_VIEWBOX_HEIGHT}" width="${KEY_ARROW_VIEWBOX_WIDTH}" height="${KEY_ARROW_VIEWBOX_HEIGHT}" aria-hidden="true"><line x1="${KEY_ARROW_LINE_START_X}" y1="${KEY_ARROW_CENTER_Y}" x2="${KEY_ARROW_BASE_X}" y2="${KEY_ARROW_CENTER_Y}" class="graph-edge${extra}"${style ? ` style="${style}"` : ""}></line><polygon points="${KEY_ARROW_TIP_X},${KEY_ARROW_CENTER_Y} ${KEY_ARROW_BASE_X},${top} ${KEY_ARROW_BASE_X},${bottom}" class="graph-key-arrow"></polygon></svg>`;
     return `<span class="graph-key-title">line key</span>`
       + `<span class="graph-key-row">${sample("")} sync call</span>`
       + `<span class="graph-key-row">${sample(" graph-edge-async")} async call</span>`
@@ -301,7 +311,14 @@
     return 1 + 2.5 * Math.log(1 + (Number(weight) || 0));
   }
 
+  function clearGraphEvents(container) {
+    if (!container.__graphCleanup) return;
+    container.__graphCleanup();
+    delete container.__graphCleanup;
+  }
+
   function renderFallback(container, graph, spans) {
+    clearGraphEvents(container);
     const counts = serviceStats(spans || []);
     container.classList.remove("graph-map");
     const nodes = graph?.nodes ?? [];

@@ -309,6 +309,17 @@ try {
     const state = await evaluate(client, `(${mapRenderState})()`);
     return state.svgNodes >= 2 || state.fallbackNodes >= 2 ? state : false;
   }, "service map rendered");
+  if (mapState.svgNodes >= 2) {
+    const mapInteraction = await evaluate(client, `(${mapInteractionState})()`);
+    const mapInteractionReady = mapInteraction.svgFillsMap
+      && !mapInteraction.nodeHasDragListener
+      && mapInteraction.mapHasZoomListener
+      && mapInteraction.tooltipShown
+      && mapInteraction.tooltipDismissed;
+    if (!mapInteractionReady) {
+      throw new Error(`service map interaction state failed: ${JSON.stringify(mapInteraction)}`);
+    }
+  }
 
   const maxNodeControl = await evaluate(client, `(() => {
     const input = document.querySelector("#max-nodes");
@@ -1249,6 +1260,45 @@ function mapRenderState() {
     fallbackNodes: map.querySelectorAll(".service-node").length,
     svgNodes: svg ? svg.querySelectorAll(".graph-node").length : 0,
     text: map.textContent.trim(),
+  };
+}
+
+function mapInteractionState() {
+  const sizeTolerancePx = 1;
+  const map = document.querySelector("#service-map");
+  const svg = map.querySelector("svg.graph-svg");
+  const node = svg?.querySelector(".graph-node");
+  const tooltip = map.querySelector(".graph-tooltip");
+  if (!svg || !node || !tooltip) {
+    return {
+      ready: false,
+      svgFillsMap: false,
+      nodeHasDragListener: false,
+      mapHasZoomListener: false,
+      tooltipShown: false,
+      tooltipDismissed: false,
+    };
+  }
+  const mapRect = map.getBoundingClientRect();
+  const svgRect = svg.getBoundingClientRect();
+  const mapContentHeight = map.clientHeight;
+  const nodeListeners = (node.__on || []).map((listener) => `${listener.type}.${listener.name}`);
+  const mapListeners = (map.__on || []).map((listener) => `${listener.type}.${listener.name}`);
+  node.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false, pointerType: "mouse" }));
+  const tooltipShown = !tooltip.hidden;
+  map.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }));
+  return {
+    ready: true,
+    svgFillsMap: Math.abs(svgRect.height - mapContentHeight) <= sizeTolerancePx,
+    nodeHasDragListener: nodeListeners.some((listener) => listener.endsWith(".drag")),
+    mapHasZoomListener: mapListeners.some((listener) => listener.endsWith(".zoom")),
+    tooltipShown,
+    tooltipDismissed: tooltip.hidden,
+    mapHeight: mapRect.height,
+    mapContentHeight,
+    svgHeight: svgRect.height,
+    nodeListeners,
+    mapListeners,
   };
 }
 

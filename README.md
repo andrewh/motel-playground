@@ -19,7 +19,7 @@ from one-shot runs into a live observability workbench.
 - `andrewh/motel` checked out as a Git submodule at `third_party/motel` so the
   playground can build against a pinned engine revision without copying the
   whole codebase into this repository.
-- d3 powers the service map (a pan/zoom/draggable SVG network graph) and backs
+- d3 powers the service map (a pan/zoom SVG network graph) and backs
   the Observable Plot metric charts, all vendored so the playground can run
   without loading runtime dependencies from a CDN.
 
