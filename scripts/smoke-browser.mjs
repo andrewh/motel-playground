@@ -375,7 +375,25 @@ try {
   ) {
     throw new Error(`trace import controls have unexpected defaults: ${JSON.stringify(traceImportDefaults)}`);
   }
-  await importTraceFile(client, traceFixture);
+  const traceDropHighlight = await startFileDrag(client, ".trace-import-panel", traceFixture, "trace.json");
+  if (!traceDropHighlight.enter.defaultPrevented || !traceDropHighlight.over.over) {
+    throw new Error(`trace drop target did not highlight for file drag: ${JSON.stringify(traceDropHighlight)}`);
+  }
+  await dispatchShortcut(client, { key: "Escape" });
+  const cancelledTraceDrop = await waitFor(async () => {
+    const state = await evaluate(client, `(${fileDropClassState})(".trace-import-panel")`);
+    return !state.active && !state.over ? state : false;
+  }, "trace drop highlight cancelled");
+  if (cancelledTraceDrop.status || cancelledTraceDrop.traceInput) {
+    throw new Error(`trace drop cancellation changed import state: ${JSON.stringify(cancelledTraceDrop)}`);
+  }
+  const ignoredTraceDrop = await dispatchFileDrop(client, ".trace-import-panel", traceFixture, "ignored-trace.json");
+  await delay(100);
+  const traceAfterIgnoredDrop = await evaluate(client, `(${fileDropClassState})(".trace-import-panel")`);
+  if (traceAfterIgnoredDrop.status || traceAfterIgnoredDrop.traceInput || !ignoredTraceDrop.defaultPrevented) {
+    throw new Error(`cancelled trace drag still imported a file: ${JSON.stringify({ ignoredTraceDrop, traceAfterIgnoredDrop })}`);
+  }
+  await dispatchFileDrop(client, ".trace-import-panel", traceFixture, "trace.json");
   const loadedTrace = await waitFor(async () => {
     const state = await evaluate(client, `(${traceImportLoadState})()`);
     return state.loaded ? state : false;
@@ -596,7 +614,11 @@ try {
 
   await client.send("Page.navigate", { url: appURL });
   await waitFor(async () => evaluate(client, `document.querySelector("#runtime-status")?.textContent === "Runtime ready"`), "runtime ready after result import reload");
-  await importResultFile(client, exportedResults.text);
+  const resultDropHighlight = await startFileDrag(client, ".result-actions", exportedResults.text, "shared-results.json");
+  if (!resultDropHighlight.enter.defaultPrevented || !resultDropHighlight.over.over) {
+    throw new Error(`result drop target did not highlight for file drag: ${JSON.stringify(resultDropHighlight)}`);
+  }
+  await dispatchFileDrop(client, ".result-actions", exportedResults.text, "shared-results.json");
   const importedResults = await waitFor(async () => {
     const state = await evaluate(client, `(${resultImportState})()`);
     return state.ready ? state : false;
@@ -917,28 +939,36 @@ async function setSignalControls(client, signals) {
   `);
 }
 
-async function importResultFile(client, text) {
-  await evaluate(client, `
-    (() => {
-      const input = document.querySelector("#result-file");
-      const file = new File([${JSON.stringify(text)}], "shared-results.json", { type: "application/json" });
-      const transfer = new DataTransfer();
-      transfer.items.add(file);
-      input.files = transfer.files;
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    })()
-  `);
+async function startFileDrag(client, selector, text, name, type = "application/json") {
+  const enter = await dispatchFileDrag(client, selector, "dragenter", text, name, type);
+  const over = await dispatchFileDrag(client, selector, "dragover", text, name, type);
+  return { enter, over };
 }
 
-async function importTraceFile(client, text) {
-  await evaluate(client, `
+async function dispatchFileDrop(client, selector, text, name, type = "application/json") {
+  await dispatchFileDrag(client, selector, "dragover", text, name, type);
+  return dispatchFileDrag(client, selector, "drop", text, name, type);
+}
+
+async function dispatchFileDrag(client, selector, eventType, text, name, type = "application/json") {
+  return evaluate(client, `
     (() => {
-      const input = document.querySelector("#trace-file");
-      const file = new File([${JSON.stringify(text)}], "trace.json", { type: "application/json" });
+      const target = document.querySelector(${JSON.stringify(selector)});
+      const file = new File([${JSON.stringify(text)}], ${JSON.stringify(name)}, { type: ${JSON.stringify(type)} });
       const transfer = new DataTransfer();
       transfer.items.add(file);
-      input.files = transfer.files;
-      input.dispatchEvent(new Event("change", { bubbles: true }));
+      const event = new DragEvent(${JSON.stringify(eventType)}, {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: transfer,
+      });
+      target.dispatchEvent(event);
+      return {
+        defaultPrevented: event.defaultPrevented,
+        dropEffect: event.dataTransfer.dropEffect,
+        active: target.classList.contains("drop-zone-active"),
+        over: target.classList.contains("drop-zone-over"),
+      };
     })()
   `);
 }
@@ -1147,6 +1177,16 @@ function traceImportLoadState() {
     status,
     loaded: status.includes("Loaded trace.json"),
     inputIncludesOTLP: input.includes("resourceSpans"),
+  };
+}
+
+function fileDropClassState(selector) {
+  const target = document.querySelector(selector);
+  return {
+    active: target.classList.contains("drop-zone-active"),
+    over: target.classList.contains("drop-zone-over"),
+    status: document.querySelector("#trace-import-status")?.textContent ?? "",
+    traceInput: document.querySelector("#trace-input")?.value ?? "",
   };
 }
 
