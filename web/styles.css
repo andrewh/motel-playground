@@ -244,7 +244,8 @@ h2 {
   justify-content: flex-end;
 }
 
-.topnav a {
+.topnav a,
+.topnav button {
   min-height: 34px;
   display: inline-grid;
   place-items: center;
@@ -256,6 +257,7 @@ h2 {
   font-size: 0.78rem;
   font-weight: 560;
   text-decoration: none;
+  text-transform: lowercase;
   transition:
     border-color 150ms var(--ease-out),
     background-color 150ms var(--ease-out),
@@ -263,14 +265,16 @@ h2 {
 }
 
 @media (hover: hover) {
-  .topnav a:hover {
+  .topnav a:hover,
+  .topnav button:hover {
     border-color: var(--line-strong);
     background: color-mix(in oklch, var(--surface-raised), var(--ink) 6%);
     color: var(--ink);
   }
 }
 
-.topnav a:focus-visible {
+.topnav a:focus-visible,
+.topnav button:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
@@ -396,6 +400,26 @@ h2 {
   color: var(--ink);
   font-size: 0.9rem;
   font-weight: 560;
+}
+
+.privacy-modal {
+  width: min(680px, 100%);
+}
+
+.privacy-copy {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.privacy-copy p {
+  color: var(--ink);
+  font-size: 0.94rem;
+  line-height: 1.58;
+}
+
+.privacy-copy p + p {
+  color: var(--muted-strong);
 }
 
 kbd {
@@ -1556,7 +1580,8 @@ pre {
     padding: var(--space-3) 0;
   }
 
-  .topnav a {
+  .topnav a,
+  .topnav button {
     flex: 1 1 46%;
   }
 

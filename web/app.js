@@ -12,6 +12,17 @@ import {
   resultSnapshotFilename,
   resultSnapshotMimeType,
 } from "./result-snapshot.mjs";
+import {
+  bucketBytes,
+  categorizeError,
+  elapsedMilliseconds,
+  initTelemetry,
+  telemetryEventNames,
+  telemetrySpanNames,
+  trackEvent,
+  traceAsync,
+  traceSync,
+} from "./telemetry.mjs";
 
 const sampleTopology = `# Five-service topology demonstrating motel capabilities
 version: 1
@@ -108,6 +119,7 @@ const reportTableRowLimit = 80;
 const bytesPerMiB = 1024 * 1024;
 const traceImportMaxMiB = 5;
 const traceImportMaxBytes = traceImportMaxMiB * bytesPerMiB;
+const disabledSignalsLabel = "none";
 
 const state = {
   ready: false,
@@ -147,6 +159,10 @@ const els = {
   editor: document.querySelector("#editor"),
   status: document.querySelector("#runtime-status"),
   theme: document.querySelector("#theme-toggle"),
+  privacyStatement: document.querySelector("#privacy-statement"),
+  privacyPanel: document.querySelector("#privacy-statement .privacy-modal"),
+  privacyLink: document.querySelector("#privacy-link"),
+  privacyClose: document.querySelector("#privacy-close"),
   shortcutHelp: document.querySelector("#shortcut-help"),
   shortcutHelpPanel: document.querySelector("#shortcut-help .shortcut-modal"),
   shortcutHelpButton: document.querySelector("#shortcut-help-button"),
@@ -205,11 +221,13 @@ const editors = {
   raw: null,
 };
 let lastShortcutFocus = null;
+let lastPrivacyFocus = null;
 
 els.editor.value = sampleTopology;
 clearMap(emptyCopy.map);
 clearSignalOutput();
 
+initTelemetry();
 initTheme();
 initEditors();
 
@@ -228,13 +246,24 @@ els.theme.addEventListener("click", () => {
   if (state.currentTopology) void renderPreview();
 });
 
+els.privacyLink.addEventListener("click", (event) => {
+  event.preventDefault();
+  openPrivacyStatement();
+});
+els.privacyClose.addEventListener("click", () => closePrivacyStatement());
+els.privacyStatement.addEventListener("click", (event) => {
+  if (event.target === els.privacyStatement) closePrivacyStatement();
+});
+els.privacyPanel.addEventListener("keydown", (event) => {
+  if (event.key === "Tab") trapModalFocus(event, els.privacyPanel);
+});
 els.shortcutHelpButton.addEventListener("click", () => openShortcutHelp());
 els.shortcutHelpClose.addEventListener("click", () => closeShortcutHelp());
 els.shortcutHelp.addEventListener("click", (event) => {
   if (event.target === els.shortcutHelp) closeShortcutHelp();
 });
 els.shortcutHelpPanel.addEventListener("keydown", (event) => {
-  if (event.key === "Tab") trapShortcutHelpFocus(event);
+  if (event.key === "Tab") trapModalFocus(event, els.shortcutHelpPanel);
 });
 document.addEventListener("keydown", handleGlobalShortcut);
 
@@ -295,7 +324,7 @@ window.addEventListener("beforeprint", () => {
 
 void restoreShareStateFromURL();
 syncControls();
-loadWasm();
+void traceAsync(telemetrySpanNames.appStartup, () => loadWasm());
 
 function activateTab(tab) {
   for (const item of resultTabs) {
@@ -317,6 +346,7 @@ function activateTab(tab) {
     editors.raw?.refresh();
     if (editors.raw) syncCodeMirrorGutter(editors.raw);
   }
+  trackEvent(telemetryEventNames.resultTabChanged, { view: tab.dataset.view });
 }
 
 function handleResultTabKeydown(event, tab) {
@@ -340,6 +370,13 @@ function handleResultTabKeydown(event, tab) {
 
 function handleGlobalShortcut(event) {
   if (event.defaultPrevented || event.isComposing) return;
+  if (isPrivacyStatementOpen()) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closePrivacyStatement();
+    }
+    return;
+  }
   if (isShortcutHelpOpen()) {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -483,11 +520,13 @@ function initEditors() {
 async function copyShareURL() {
   const url = buildShareURL();
   if (isShareURLTooLarge(url)) {
+    trackEvent(telemetryEventNames.shareLinkRejected, { reason: "too_large" });
     setShareStatus("Share link is too large; save YAML instead.", "bad");
     return;
   }
   window.history.replaceState(null, "", url.href);
   const copied = await writeClipboard(url.href);
+  trackEvent(telemetryEventNames.shareLinkCreated);
   setShareStatus(copied ? "Share link copied" : "Share link ready in address bar", "good");
 }
 
@@ -640,6 +679,27 @@ function traceInputBytes(value) {
   return new TextEncoder().encode(value).byteLength;
 }
 
+function openPrivacyStatement() {
+  if (isPrivacyStatementOpen()) return;
+  lastPrivacyFocus = els.privacyLink;
+  els.privacyStatement.hidden = false;
+  document.body.classList.add("modal-open");
+  requestAnimationFrame(() => els.privacyPanel.focus({ preventScroll: true }));
+}
+
+function closePrivacyStatement() {
+  if (!isPrivacyStatementOpen()) return;
+  els.privacyStatement.hidden = true;
+  document.body.classList.remove("modal-open");
+  const target = lastPrivacyFocus?.isConnected ? lastPrivacyFocus : els.privacyLink;
+  lastPrivacyFocus = null;
+  target.focus({ preventScroll: true });
+}
+
+function isPrivacyStatementOpen() {
+  return !els.privacyStatement.hidden;
+}
+
 function openShortcutHelp() {
   if (isShortcutHelpOpen()) return;
   lastShortcutFocus = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
@@ -663,8 +723,8 @@ function isShortcutHelpOpen() {
   return !els.shortcutHelp.hidden;
 }
 
-function trapShortcutHelpFocus(event) {
-  const focusable = Array.from(els.shortcutHelpPanel.querySelectorAll(
+function trapModalFocus(event, panel) {
+  const focusable = Array.from(panel.querySelectorAll(
     'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
   )).filter((item) => !item.disabled && item.offsetParent !== null);
   if (!focusable.length) return;
@@ -693,16 +753,27 @@ function setTheme(theme) {
 }
 
 async function loadWasm() {
+  const startedAt = performance.now();
+  trackEvent(telemetryEventNames.wasmLoadStarted);
   try {
-    const go = new Go();
-    const result = await WebAssembly.instantiateStreaming(fetch("./motel.wasm"), go.importObject);
-    go.run(result.instance);
+    await traceAsync(telemetrySpanNames.wasmLoad, async () => {
+      const go = new Go();
+      const result = await WebAssembly.instantiateStreaming(fetch("./motel.wasm"), go.importObject);
+      go.run(result.instance);
+    });
+    trackEvent(telemetryEventNames.wasmLoadCompleted, {
+      duration_ms: elapsedMilliseconds(startedAt),
+    });
     state.ready = true;
     els.status.textContent = "Runtime ready";
     els.status.classList.add("ready");
     syncControls();
     await validate({ passive: true });
   } catch (error) {
+    trackEvent(telemetryEventNames.wasmLoadFailed, {
+      duration_ms: elapsedMilliseconds(startedAt),
+      error_category: categorizeError(error),
+    });
     els.status.textContent = "Build runtime first";
     els.status.classList.add("error");
     renderRawText(String(error));
@@ -737,22 +808,43 @@ async function run() {
   const editorRevision = state.editorRevision;
   const topology = getTopologyValue();
   const settings = currentRunSettings();
+  const telemetryParams = runTelemetryParams(settings);
+  const startedAt = performance.now();
   state.activeRunID = runID;
   setRunBusy(true, "Running topology in background");
   setValidateButton("Validate");
+  trackEvent(telemetryEventNames.runStarted, telemetryParams);
   try {
-    const result = JSON.parse(await runClient().run({
+    const result = JSON.parse(await traceAsync(telemetrySpanNames.topologyRun, () => runClient().run({
       topology,
       duration: Number(els.duration.value),
       seed: Number(els.seed.value),
       signals: settings.signals,
       slowThresholdMs: Number(settings.slowThresholdMs),
-    }));
+    }), telemetryParams));
     if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
     renderRun(result, { topology, settings });
     renderRawJson(result);
+    if (result.ok) {
+      trackEvent(telemetryEventNames.runCompleted, {
+        ...telemetryParams,
+        ...runStatsTelemetryParams(result),
+        duration_ms: elapsedMilliseconds(startedAt),
+      });
+    } else {
+      trackEvent(telemetryEventNames.runFailed, {
+        ...telemetryParams,
+        duration_ms: elapsedMilliseconds(startedAt),
+        error_category: "engine",
+      });
+    }
   } catch (error) {
     if (state.activeRunID !== runID || state.editorRevision !== editorRevision) return;
+    trackEvent(telemetryEventNames.runFailed, {
+      ...telemetryParams,
+      duration_ms: elapsedMilliseconds(startedAt),
+      error_category: categorizeError(error),
+    });
     renderRunWorkerError(error);
   } finally {
     if (state.activeRunID === runID) {
@@ -765,6 +857,9 @@ async function generateTopology() {
   const currentSeed = Math.max(1, Math.floor(Number(els.seed.value) || 0));
   const seed = nextRandomSeed(currentSeed);
   const topology = randomTopologyYaml(seed, { maxNodes: maxRandomNodes() });
+  trackEvent(telemetryEventNames.topologyGenerated, {
+    max_nodes: maxRandomNodes(),
+  });
   els.seed.value = String(seed);
   setTopologyValue(topology);
   els.summary.classList.remove("bad");
@@ -801,6 +896,9 @@ async function loadTopologyFile() {
   if (!file) return;
   try {
     setTopologyValue(await file.text());
+    trackEvent(telemetryEventNames.topologyLoaded, {
+      size_bucket: bucketBytes(file.size),
+    });
     els.summary.classList.remove("bad", "good");
     els.summary.textContent = `Loaded ${file.name}`;
     clearRunOutput(emptyCopy.spans);
@@ -825,6 +923,10 @@ async function loadTraceFile() {
       return;
     }
     els.traceInput.value = await file.text();
+    trackEvent(telemetryEventNames.traceFileLoaded, {
+      format: els.traceFormat.value,
+      size_bucket: bucketBytes(file.size),
+    });
     setTraceImportStatus(`Loaded ${file.name}`, "good");
   } catch (error) {
     setTraceImportStatus(`Could not load traces: ${error.message}`, "bad");
@@ -836,6 +938,7 @@ async function loadTraceFile() {
 function saveTopology() {
   const filename = topologyFilename();
   downloadText(getTopologyValue(), { filename, type: "text/yaml" });
+  trackEvent(telemetryEventNames.topologySaved);
   els.summary.classList.remove("bad");
   els.summary.textContent = `Saved ${filename}`;
 }
@@ -856,6 +959,7 @@ function exportResults() {
     filename,
     type: resultSnapshotMimeType,
   });
+  trackEvent(telemetryEventNames.resultExported, runStatsTelemetryParams(snapshot.result));
   setShareStatus(`Exported ${filename}`, "good");
 }
 
@@ -866,6 +970,7 @@ function printReport() {
   }
   renderPrintableReport(makeCurrentResultSnapshot());
   document.body.classList.add("report-ready");
+  trackEvent(telemetryEventNames.reportPrinted, runStatsTelemetryParams(state.lastRun));
   setShareStatus("Report ready for print", "good");
   window.print();
 }
@@ -876,8 +981,16 @@ async function loadResultsFile() {
   try {
     const snapshot = parseResultSnapshot(await file.text());
     await applyResultSnapshot(snapshot);
+    trackEvent(telemetryEventNames.resultImported, {
+      size_bucket: bucketBytes(file.size),
+      ...runStatsTelemetryParams(snapshot.result),
+    });
     setShareStatus(`Imported ${file.name}`, "good");
   } catch (error) {
+    trackEvent(telemetryEventNames.resultImportFailed, {
+      size_bucket: bucketBytes(file.size),
+      error_category: categorizeError(error),
+    });
     setShareStatus(`Could not import results: ${error.message}`, "bad");
   } finally {
     els.resultFile.value = "";
@@ -887,20 +1000,34 @@ async function loadResultsFile() {
 async function importTraces() {
   if (!state.ready || state.runtimeBusy) return;
   const source = els.traceInput.value.trim();
+  const telemetryParams = traceImportTelemetryParams(source, els.traceFormat.value);
   if (!source) {
     setTraceImportStatus("Trace input is empty.", "bad");
     return;
   }
   if (traceInputBytes(source) > traceImportMaxBytes) {
+    trackEvent(telemetryEventNames.traceImportFailed, {
+      ...telemetryParams,
+      error_category: "too_large",
+    });
     setTraceImportStatus(`Trace input exceeds ${traceImportMaxMiB} MB.`, "bad");
     return;
   }
 
   setRuntimeBusy(true, "Importing traces");
+  trackEvent(telemetryEventNames.traceImportStarted, telemetryParams);
   try {
-    const result = JSON.parse(await window.motelImportTraces(source, els.traceFormat.value));
+    const result = JSON.parse(await traceAsync(
+      telemetrySpanNames.traceImport,
+      () => window.motelImportTraces(source, els.traceFormat.value),
+      telemetryParams,
+    ));
     renderRawJson(result);
     if (!result.ok) {
+      trackEvent(telemetryEventNames.traceImportFailed, {
+        ...telemetryParams,
+        error_category: "diagnostic",
+      });
       setTraceImportStatus(`Import failed: ${firstDiagnosticMessage(result)}`, "bad");
       return;
     }
@@ -913,8 +1040,17 @@ async function importTraces() {
     els.summary.classList.remove("bad");
     els.summary.textContent = "Imported topology from traces";
     setTraceImportStatus(traceImportSummary(result), "good");
+    trackEvent(telemetryEventNames.traceImportCompleted, {
+      ...telemetryParams,
+      traces: result?.stats?.traces ?? 0,
+      spans: result?.stats?.spans ?? 0,
+    });
     if (state.ready) await validate({ passive: true });
   } catch (error) {
+    trackEvent(telemetryEventNames.traceImportFailed, {
+      ...telemetryParams,
+      error_category: categorizeError(error),
+    });
     setTraceImportStatus(`Import failed: ${error.message}`, "bad");
   } finally {
     setRuntimeBusy(false);
@@ -963,6 +1099,43 @@ function currentRunSettings() {
     maxNodes: els.maxNodes.value,
     signals: currentSignalSettings(),
   };
+}
+
+function runTelemetryParams(settings) {
+  return {
+    duration_seconds: telemetryNumber(settings.duration),
+    slow_threshold_ms: telemetryNumber(settings.slowThresholdMs),
+    signals: enabledSignalLabel(settings.signals),
+  };
+}
+
+function traceImportTelemetryParams(source, format) {
+  return {
+    format: format || "auto",
+    size_bucket: bucketBytes(traceInputBytes(source)),
+  };
+}
+
+function runStatsTelemetryParams(result) {
+  const stats = result?.stats ?? {};
+  return {
+    traces: telemetryNumber(stats.traces),
+    spans: telemetryNumber(stats.spans),
+    errors: telemetryNumber(stats.errors),
+  };
+}
+
+function enabledSignalLabel(signals = {}) {
+  const normalized = normalizeSignalSettings(signals);
+  const enabled = Object.entries(normalized)
+    .filter(([, value]) => value)
+    .map(([name]) => name);
+  return enabled.length ? enabled.join(",") : disabledSignalsLabel;
+}
+
+function telemetryNumber(value) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : 0;
 }
 
 function downloadText(value, { filename, type }) {
@@ -1186,8 +1359,13 @@ function formatSVGNumber(value) {
 }
 
 async function renderPreview() {
+  const durationSeconds = previewDurationSeconds();
   try {
-    const svg = await window.motelPreview(getTopologyValue(), previewDurationSeconds());
+    const svg = await traceAsync(
+      telemetrySpanNames.previewRender,
+      () => window.motelPreview(getTopologyValue(), durationSeconds),
+      { duration_seconds: durationSeconds },
+    );
     els.preview.innerHTML = svg;
     return true;
   } catch {
@@ -1229,6 +1407,12 @@ function renderValidation(result) {
 }
 
 function renderRun(result, source = { topology: getTopologyValue(), settings: currentRunSettings() }) {
+  return traceSync(telemetrySpanNames.resultRender, () => renderRunContents(result, source), {
+    ok: result?.ok === true,
+  });
+}
+
+function renderRunContents(result, source = { topology: getTopologyValue(), settings: currentRunSettings() }) {
   if (!result.ok) {
     state.lastRun = null;
     state.lastRunSource = null;
@@ -1623,6 +1807,13 @@ function syncCodeMirrorGutter(editor) {
 }
 
 function renderMap(topology, spans) {
+  return traceSync(telemetrySpanNames.serviceMapRender, () => renderMapContents(topology, spans), {
+    services: topology?.services?.length ?? 0,
+    spans: Array.isArray(spans) ? spans.length : 0,
+  });
+}
+
+function renderMapContents(topology, spans) {
   if (!topology) return;
   if (!document.querySelector("#view-map").classList.contains("active")) return;
   if (topology.graph && window.renderP5Map) {
