@@ -103,6 +103,8 @@ scenarios:
 `;
 
 const p5ScriptPath = "./vendor/p5/p5.min.js";
+const d3ScriptPath = "./vendor/d3/d3.min.js";
+const plotScriptPath = "./vendor/plot/plot.umd.min.js";
 const firstResultTabIndex = 0;
 const nextResultTabOffset = 1;
 const previousResultTabOffset = -1;
@@ -135,6 +137,8 @@ const state = {
   activeRunID: 0,
   runner: null,
   p5Loading: null,
+  plotLoading: null,
+  metricChartData: null,
   rawOutput: "",
   rawOutputJSON: false,
   rawOutputDirty: false,
@@ -1525,20 +1529,48 @@ const metricSeriesPalette = [
   "var(--ready-ink)",
   "var(--accent-strong)",
   "var(--muted-strong)",
+  "var(--warn)",
 ];
 const maxMetricSeries = 6;
+const metricChartWidth = 360;
+const metricChartHeight = 150;
 
 function clearMetricCharts() {
-  els.metricCharts.innerHTML = "";
+  state.metricChartData = null;
+  els.metricCharts.replaceChildren();
 }
 
+// Render is split from draw so the (lazy-loaded) Observable Plot bundle can fill
+// in once it arrives without blocking the synchronous metric list render.
 function renderMetricCharts(metrics) {
+  state.metricChartData = metrics;
+  if (!metrics.length) {
+    els.metricCharts.replaceChildren();
+    return;
+  }
+  if (!window.Plot) {
+    els.metricCharts.innerHTML = `<p class="empty">Loading charts.</p>`;
+    loadPlot()
+      .then(() => {
+        if (state.metricChartData === metrics) drawMetricCharts(metrics);
+      })
+      .catch(() => {
+        if (state.metricChartData === metrics) {
+          els.metricCharts.innerHTML = `<p class="empty">Charts unavailable; see the metric list below.</p>`;
+        }
+      });
+    return;
+  }
+  drawMetricCharts(metrics);
+}
+
+function drawMetricCharts(metrics) {
   const groups = groupMetricsByName(metrics);
   const cards = [];
   for (const [name, events] of groups) {
-    cards.push(renderMetricChartCard(name, events));
+    cards.push(buildMetricChartCard(name, events));
   }
-  els.metricCharts.innerHTML = cards.join("");
+  els.metricCharts.replaceChildren(...cards);
 }
 
 function groupMetricsByName(metrics) {
@@ -1569,125 +1601,99 @@ function metricSeriesKey(metric) {
   return attrs ? `${context} · ${attrs}` : context;
 }
 
-function renderMetricChartCard(name, events) {
+function buildMetricChartCard(name, events) {
   const type = events[0]?.type || "metric";
   const unit = events.find((event) => event.unit)?.unit || "";
-  const seriesMap = new Map();
-  const times = new Set();
-  for (const event of events) {
-    const key = metricSeriesKey(event);
-    if (!seriesMap.has(key)) seriesMap.set(key, []);
-    const t = Number.isFinite(event.timestamp_ms) ? event.timestamp_ms : 0;
-    times.add(t);
-    seriesMap.get(key).push({ t, v: metricChartValue(event) });
+  const rows = events.map((event) => ({
+    series: metricSeriesKey(event),
+    time: new Date(Number.isFinite(event.timestamp_ms) && event.timestamp_ms > 0 ? event.timestamp_ms : Date.now()),
+    value: metricChartValue(event),
+  }));
+  // Keep only the busiest series so the colour range and legend stay readable.
+  const peakBySeries = new Map();
+  for (const row of rows) {
+    peakBySeries.set(row.series, Math.max(peakBySeries.get(row.series) ?? -Infinity, row.value));
   }
-  const series = [...seriesMap.entries()]
-    .map(([label, points], index) => ({
-      label,
-      color: metricSeriesPalette[index % metricSeriesPalette.length],
-      points: points.slice().sort((a, b) => a.t - b.t),
-    }))
-    .sort((a, b) => seriesPeak(b.points) - seriesPeak(a.points));
-  const shown = series.slice(0, maxMetricSeries);
-  const hidden = series.length - shown.length;
-  shown.forEach((entry, index) => {
-    entry.color = metricSeriesPalette[index % metricSeriesPalette.length];
+  const domain = [...peakBySeries.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, maxMetricSeries)
+    .map(([series]) => series);
+  const allowed = new Set(domain);
+  const visibleRows = rows.filter((row) => allowed.has(row.series));
+  const hidden = peakBySeries.size - allowed.size;
+  const overTime = new Set(events.map((event) => event.timestamp_ms ?? 0)).size > 1;
+
+  const figure = document.createElement("figure");
+  figure.className = "metric-chart";
+  const caption = document.createElement("figcaption");
+  caption.innerHTML = `<strong>${escapeHtml(name)}</strong>
+    <span class="metric-chart-kind">${escapeHtml(type)}${unit ? ` (${escapeHtml(unit)})` : ""}</span>`;
+  figure.append(caption);
+  const plot = overTime
+    ? metricTimeSeriesPlot(visibleRows, unit, domain)
+    : metricBarPlot(visibleRows, unit, domain);
+  figure.append(makeMetricPlotResponsive(plot));
+  if (hidden > 0) {
+    const more = document.createElement("p");
+    more.className = "metric-legend-more";
+    more.textContent = `+${hidden} more series not shown`;
+    figure.append(more);
+  }
+  return figure;
+}
+
+function metricPlotOptions(unit, domain) {
+  return {
+    width: metricChartWidth,
+    height: metricChartHeight,
+    marginLeft: 52,
+    style: { background: "transparent", color: "currentColor", overflow: "visible" },
+    y: { label: unit || null, grid: true, nice: true },
+    color: { domain, range: metricSeriesPalette, legend: domain.length > 1 },
+  };
+}
+
+function metricTimeSeriesPlot(rows, unit, domain) {
+  const Plot = window.Plot;
+  return Plot.plot({
+    ...metricPlotOptions(unit, domain),
+    x: { type: "time", label: null, ticks: 4 },
+    marks: [
+      Plot.ruleY([0]),
+      Plot.lineY(rows, { x: "time", y: "value", stroke: "series", curve: "monotone-x" }),
+      Plot.dot(rows, { x: "time", y: "value", fill: "series", r: 2.5, tip: true }),
+    ],
   });
-  const chart = times.size > 1
-    ? renderMetricLineChart(shown)
-    : renderMetricBarChart(shown);
-  const legend = shown.length > 1 || times.size > 1
-    ? `<ul class="metric-legend">
-        ${shown.map((entry) => `<li><span class="metric-swatch" style="background:${entry.color}"></span>${escapeHtml(entry.label)}</li>`).join("")}
-        ${hidden > 0 ? `<li class="metric-legend-more">+${hidden} more series</li>` : ""}
-      </ul>`
-    : "";
-  const unitLabel = unit ? ` (${escapeHtml(unit)})` : "";
-  return `<figure class="metric-chart">
-    <figcaption>
-      <strong>${escapeHtml(name)}</strong>
-      <span class="metric-chart-kind">${escapeHtml(type)}${unitLabel}</span>
-    </figcaption>
-    ${chart}
-    ${legend}
-  </figure>`;
 }
 
-function seriesPeak(points) {
-  return points.reduce((max, point) => Math.max(max, point.v), -Infinity);
+function metricBarPlot(rows, unit, domain) {
+  const Plot = window.Plot;
+  return Plot.plot({
+    ...metricPlotOptions(unit, domain),
+    x: { domain, label: null, axis: null },
+    marks: [
+      Plot.ruleY([0]),
+      Plot.barY(rows, Plot.groupX({ y: "sum" }, { x: "series", y: "value", fill: "series", tip: true })),
+    ],
+  });
 }
 
-function metricChartDomain(series) {
-  let min = 0;
-  let max = 0;
-  for (const entry of series) {
-    for (const point of entry.points) {
-      if (point.v < min) min = point.v;
-      if (point.v > max) max = point.v;
+// Plot emits fixed-size charts; swap to a viewBox so the chart svg (but not the
+// small HTML legend swatches) scales with its card.
+function makeMetricPlotResponsive(node) {
+  const svg = node.tagName.toLowerCase() === "svg" ? node : node.querySelector(":scope > svg");
+  if (svg) {
+    const width = svg.getAttribute("width");
+    const height = svg.getAttribute("height");
+    if (width && height && !svg.getAttribute("viewBox")) {
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
     }
+    svg.removeAttribute("width");
+    svg.removeAttribute("height");
+    svg.style.maxWidth = "100%";
+    svg.style.height = "auto";
   }
-  if (max === min) max = min + 1;
-  return { min, max };
-}
-
-const chartWidth = 320;
-const chartHeight = 140;
-const chartPad = { top: 12, right: 12, bottom: 22, left: 12 };
-
-function chartY(value, domain) {
-  const inner = chartHeight - chartPad.top - chartPad.bottom;
-  const ratio = (value - domain.min) / (domain.max - domain.min);
-  return chartPad.top + inner * (1 - ratio);
-}
-
-function renderMetricLineChart(series) {
-  const domain = metricChartDomain(series);
-  const allTimes = series.flatMap((entry) => entry.points.map((point) => point.t));
-  const minT = Math.min(...allTimes);
-  const maxT = Math.max(...allTimes);
-  const innerWidth = chartWidth - chartPad.left - chartPad.right;
-  const scaleX = (t) => maxT === minT
-    ? chartPad.left + innerWidth / 2
-    : chartPad.left + innerWidth * ((t - minT) / (maxT - minT));
-  const baseline = chartY(domain.min, domain);
-  const lines = series.map((entry) => {
-    const coords = entry.points.map((point) => `${scaleX(point.t).toFixed(1)},${chartY(point.v, domain).toFixed(1)}`);
-    const dots = entry.points
-      .map((point) => `<circle cx="${scaleX(point.t).toFixed(1)}" cy="${chartY(point.v, domain).toFixed(1)}" r="2.5" fill="${entry.color}" />`)
-      .join("");
-    return `<polyline fill="none" stroke="${entry.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${coords.join(" ")}" />${dots}`;
-  }).join("");
-  return metricChartSvg(`
-    <line class="metric-axis" x1="${chartPad.left}" y1="${baseline.toFixed(1)}" x2="${chartWidth - chartPad.right}" y2="${baseline.toFixed(1)}" />
-    ${lines}
-  `, `${series.length} series over time`);
-}
-
-function renderMetricBarChart(series) {
-  const domain = metricChartDomain(series);
-  const innerWidth = chartWidth - chartPad.left - chartPad.right;
-  const count = Math.max(series.length, 1);
-  const slot = innerWidth / count;
-  const barWidth = Math.min(slot * 0.6, 48);
-  const baseline = chartY(0, domain);
-  const bars = series.map((entry, index) => {
-    const value = entry.points.length ? entry.points[entry.points.length - 1].v : 0;
-    const y = chartY(value, domain);
-    const top = Math.min(y, baseline);
-    const height = Math.max(Math.abs(baseline - y), 1);
-    const x = chartPad.left + slot * index + (slot - barWidth) / 2;
-    return `<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${height.toFixed(1)}" rx="2" fill="${entry.color}">
-      <title>${escapeHtml(entry.label)}: ${escapeHtml(formatNumber(value))}</title>
-    </rect>`;
-  }).join("");
-  return metricChartSvg(`
-    <line class="metric-axis" x1="${chartPad.left}" y1="${baseline.toFixed(1)}" x2="${chartWidth - chartPad.right}" y2="${baseline.toFixed(1)}" />
-    ${bars}
-  `, `${series.length} series`);
-}
-
-function metricChartSvg(body, title) {
-  return `<svg class="metric-chart-svg" viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="${escapeHtml(title)}">${body}</svg>`;
+  return node;
 }
 
 function renderLogs(logs, { enabled = true } = {}) {
@@ -2029,18 +2035,34 @@ function renderMapContents(topology, spans) {
 function loadP5() {
   if (window.p5) return Promise.resolve();
   if (state.p5Loading) return state.p5Loading;
-  state.p5Loading = new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = p5ScriptPath;
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => {
-      state.p5Loading = null;
-      reject(new Error("Could not load p5"));
-    };
-    document.head.append(script);
+  state.p5Loading = loadScript(p5ScriptPath, "Could not load p5");
+  state.p5Loading.catch(() => {
+    state.p5Loading = null;
   });
   return state.p5Loading;
+}
+
+// Observable Plot's UMD bundle expects a global d3, so load d3 first.
+function loadPlot() {
+  if (window.Plot) return Promise.resolve();
+  if (state.plotLoading) return state.plotLoading;
+  state.plotLoading = (window.d3 ? Promise.resolve() : loadScript(d3ScriptPath, "Could not load d3"))
+    .then(() => loadScript(plotScriptPath, "Could not load Observable Plot"));
+  state.plotLoading.catch(() => {
+    state.plotLoading = null;
+  });
+  return state.plotLoading;
+}
+
+function loadScript(src, errorMessage) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error(errorMessage));
+    document.head.append(script);
+  });
 }
 
 function clearRunOutput(message) {

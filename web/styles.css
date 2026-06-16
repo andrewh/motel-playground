@@ -1125,45 +1125,29 @@ input[type="search"] {
   white-space: nowrap;
 }
 
-.metric-chart-svg {
-  width: 100%;
-  height: auto;
-  aspect-ratio: 320 / 140;
-  display: block;
-}
-
-.metric-chart-svg .metric-axis {
-  stroke: var(--line-strong);
-  stroke-width: 1;
-}
-
-.metric-legend {
-  list-style: none;
+/* Observable Plot renders its own figure/svg + legend into the card. */
+.metric-chart > svg,
+.metric-chart > figure {
   margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-3);
-  font-size: 0.72rem;
+  max-width: 100%;
   color: var(--muted-strong);
 }
 
-.metric-legend li {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
+.metric-chart figure svg {
+  display: block;
+}
+
+.metric-chart [class^="plot-"][class*="-swatches"],
+.metric-chart figure {
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
 }
 
 .metric-legend-more {
+  margin: 0;
   color: var(--muted);
   font-style: italic;
-}
-
-.metric-swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  flex-shrink: 0;
+  font-size: 0.72rem;
 }
 
 .span-toolbar {
