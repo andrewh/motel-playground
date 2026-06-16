@@ -197,6 +197,7 @@ const els = {
   traces: document.querySelector("#traces"),
   errorFilter: document.querySelector("#error-filter"),
   spanFilterCount: document.querySelector("#span-filter-count"),
+  metricCharts: document.querySelector("#metric-charts"),
   signalMetrics: document.querySelector("#signal-metrics"),
   signalLogs: document.querySelector("#signal-logs"),
   logSeverityFilter: document.querySelector("#log-severity-filter"),
@@ -1463,6 +1464,7 @@ function renderRunWorkerError(error) {
 
 function renderMetrics(metrics, { enabled = true } = {}) {
   if (!enabled) {
+    clearMetricCharts();
     els.signalMetrics.innerHTML = `<p class="empty">Metrics disabled for this run.</p>`;
     return;
   }
@@ -1470,13 +1472,16 @@ function renderMetrics(metrics, { enabled = true } = {}) {
   const ordered = metrics.slice().sort(compareSignals);
   const visible = filter ? ordered.filter((metric) => signalMatchesFilter(metric, filter)) : ordered;
   if (ordered.length === 0) {
+    clearMetricCharts();
     els.signalMetrics.innerHTML = `<p class="empty">No metrics captured yet.</p>`;
     return;
   }
   if (visible.length === 0) {
+    clearMetricCharts();
     els.signalMetrics.innerHTML = `<p class="empty">No metrics match this filter.</p>`;
     return;
   }
+  renderMetricCharts(visible);
   els.signalMetrics.innerHTML = visible.map((metric, index) => {
     const panelID = `metric-panel-${index}`;
     return `<article class="signal-item">
@@ -1512,6 +1517,177 @@ function renderMetricDetails(metric) {
   ${attributes.length ? `<dl class="span-attributes">
     ${attributes.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
   </dl>` : `<p class="empty span-empty">No metric attributes.</p>`}`;
+}
+
+const metricSeriesPalette = [
+  "var(--accent)",
+  "var(--danger)",
+  "var(--ready-ink)",
+  "var(--accent-strong)",
+  "var(--muted-strong)",
+];
+const maxMetricSeries = 6;
+
+function clearMetricCharts() {
+  els.metricCharts.innerHTML = "";
+}
+
+function renderMetricCharts(metrics) {
+  const groups = groupMetricsByName(metrics);
+  const cards = [];
+  for (const [name, events] of groups) {
+    cards.push(renderMetricChartCard(name, events));
+  }
+  els.metricCharts.innerHTML = cards.join("");
+}
+
+function groupMetricsByName(metrics) {
+  const groups = new Map();
+  for (const metric of metrics) {
+    const name = metric.name || "(unnamed metric)";
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(metric);
+  }
+  return groups;
+}
+
+// A numeric value suitable for plotting. Histograms collapse to their mean so a
+// single series stays comparable with gauge/counter values.
+function metricChartValue(metric) {
+  if (metric.type === "histogram" && metric.count) {
+    return metric.sum / metric.count;
+  }
+  return Number.isFinite(metric.value) ? metric.value : 0;
+}
+
+function metricSeriesKey(metric) {
+  const context = signalContext(metric);
+  const attrs = Object.entries(metric.attributes ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ");
+  return attrs ? `${context} · ${attrs}` : context;
+}
+
+function renderMetricChartCard(name, events) {
+  const type = events[0]?.type || "metric";
+  const unit = events.find((event) => event.unit)?.unit || "";
+  const seriesMap = new Map();
+  const times = new Set();
+  for (const event of events) {
+    const key = metricSeriesKey(event);
+    if (!seriesMap.has(key)) seriesMap.set(key, []);
+    const t = Number.isFinite(event.timestamp_ms) ? event.timestamp_ms : 0;
+    times.add(t);
+    seriesMap.get(key).push({ t, v: metricChartValue(event) });
+  }
+  const series = [...seriesMap.entries()]
+    .map(([label, points], index) => ({
+      label,
+      color: metricSeriesPalette[index % metricSeriesPalette.length],
+      points: points.slice().sort((a, b) => a.t - b.t),
+    }))
+    .sort((a, b) => seriesPeak(b.points) - seriesPeak(a.points));
+  const shown = series.slice(0, maxMetricSeries);
+  const hidden = series.length - shown.length;
+  shown.forEach((entry, index) => {
+    entry.color = metricSeriesPalette[index % metricSeriesPalette.length];
+  });
+  const chart = times.size > 1
+    ? renderMetricLineChart(shown)
+    : renderMetricBarChart(shown);
+  const legend = shown.length > 1 || times.size > 1
+    ? `<ul class="metric-legend">
+        ${shown.map((entry) => `<li><span class="metric-swatch" style="background:${entry.color}"></span>${escapeHtml(entry.label)}</li>`).join("")}
+        ${hidden > 0 ? `<li class="metric-legend-more">+${hidden} more series</li>` : ""}
+      </ul>`
+    : "";
+  const unitLabel = unit ? ` (${escapeHtml(unit)})` : "";
+  return `<figure class="metric-chart">
+    <figcaption>
+      <strong>${escapeHtml(name)}</strong>
+      <span class="metric-chart-kind">${escapeHtml(type)}${unitLabel}</span>
+    </figcaption>
+    ${chart}
+    ${legend}
+  </figure>`;
+}
+
+function seriesPeak(points) {
+  return points.reduce((max, point) => Math.max(max, point.v), -Infinity);
+}
+
+function metricChartDomain(series) {
+  let min = 0;
+  let max = 0;
+  for (const entry of series) {
+    for (const point of entry.points) {
+      if (point.v < min) min = point.v;
+      if (point.v > max) max = point.v;
+    }
+  }
+  if (max === min) max = min + 1;
+  return { min, max };
+}
+
+const chartWidth = 320;
+const chartHeight = 140;
+const chartPad = { top: 12, right: 12, bottom: 22, left: 12 };
+
+function chartY(value, domain) {
+  const inner = chartHeight - chartPad.top - chartPad.bottom;
+  const ratio = (value - domain.min) / (domain.max - domain.min);
+  return chartPad.top + inner * (1 - ratio);
+}
+
+function renderMetricLineChart(series) {
+  const domain = metricChartDomain(series);
+  const allTimes = series.flatMap((entry) => entry.points.map((point) => point.t));
+  const minT = Math.min(...allTimes);
+  const maxT = Math.max(...allTimes);
+  const innerWidth = chartWidth - chartPad.left - chartPad.right;
+  const scaleX = (t) => maxT === minT
+    ? chartPad.left + innerWidth / 2
+    : chartPad.left + innerWidth * ((t - minT) / (maxT - minT));
+  const baseline = chartY(domain.min, domain);
+  const lines = series.map((entry) => {
+    const coords = entry.points.map((point) => `${scaleX(point.t).toFixed(1)},${chartY(point.v, domain).toFixed(1)}`);
+    const dots = entry.points
+      .map((point) => `<circle cx="${scaleX(point.t).toFixed(1)}" cy="${chartY(point.v, domain).toFixed(1)}" r="2.5" fill="${entry.color}" />`)
+      .join("");
+    return `<polyline fill="none" stroke="${entry.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${coords.join(" ")}" />${dots}`;
+  }).join("");
+  return metricChartSvg(`
+    <line class="metric-axis" x1="${chartPad.left}" y1="${baseline.toFixed(1)}" x2="${chartWidth - chartPad.right}" y2="${baseline.toFixed(1)}" />
+    ${lines}
+  `, `${series.length} series over time`);
+}
+
+function renderMetricBarChart(series) {
+  const domain = metricChartDomain(series);
+  const innerWidth = chartWidth - chartPad.left - chartPad.right;
+  const count = Math.max(series.length, 1);
+  const slot = innerWidth / count;
+  const barWidth = Math.min(slot * 0.6, 48);
+  const baseline = chartY(0, domain);
+  const bars = series.map((entry, index) => {
+    const value = entry.points.length ? entry.points[entry.points.length - 1].v : 0;
+    const y = chartY(value, domain);
+    const top = Math.min(y, baseline);
+    const height = Math.max(Math.abs(baseline - y), 1);
+    const x = chartPad.left + slot * index + (slot - barWidth) / 2;
+    return `<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${height.toFixed(1)}" rx="2" fill="${entry.color}">
+      <title>${escapeHtml(entry.label)}: ${escapeHtml(formatNumber(value))}</title>
+    </rect>`;
+  }).join("");
+  return metricChartSvg(`
+    <line class="metric-axis" x1="${chartPad.left}" y1="${baseline.toFixed(1)}" x2="${chartWidth - chartPad.right}" y2="${baseline.toFixed(1)}" />
+    ${bars}
+  `, `${series.length} series`);
+}
+
+function metricChartSvg(body, title) {
+  return `<svg class="metric-chart-svg" viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="${escapeHtml(title)}">${body}</svg>`;
 }
 
 function renderLogs(logs, { enabled = true } = {}) {
@@ -1884,6 +2060,7 @@ function clearRunOutput(message) {
 function clearSignalOutput(metricMessage = emptyCopy.metrics, logMessage = emptyCopy.logs) {
   state.warnLogsOnly = false;
   syncLogFilter(0, 0);
+  clearMetricCharts();
   els.signalMetrics.innerHTML = `<p class="empty">${escapeHtml(metricMessage)}</p>`;
   els.signalLogs.innerHTML = `<p class="empty">${escapeHtml(logMessage)}</p>`;
 }
