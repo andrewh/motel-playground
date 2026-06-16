@@ -1485,19 +1485,140 @@ input[type="search"] {
   min-height: 420px;
 }
 
-.service-map.p5-map {
+.service-map.graph-map {
   display: block;
-  min-height: min(58vh, 620px);
+  position: relative;
+  height: clamp(420px, 58vh, 620px);
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
+  cursor: grab;
+  touch-action: none;
 }
 
-.service-map canvas {
+.service-map.graph-map:active {
+  cursor: grabbing;
+}
+
+.graph-svg {
   display: block;
-  width: 100% !important;
-  height: auto !important;
+  width: 100%;
+  height: 100%;
+  cursor: inherit;
+}
+
+.graph-edge {
+  stroke: var(--line-strong);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.graph-edge-async {
+  stroke-dasharray: 6 6;
+}
+
+/* Arrowheads live inside the marker, so context-stroke makes them track the
+   edge colour (including the warn highlight on hover). */
+.graph-arrowhead {
+  fill: context-stroke;
+}
+
+.graph-key-arrow {
+  fill: var(--line-strong);
+}
+
+.graph-edge.is-active {
+  stroke: var(--warn);
+}
+
+.graph-node rect {
+  fill: var(--surface-raised);
+  stroke: color-mix(in oklch, var(--muted-strong), var(--danger) calc(var(--err, 0) * 100%));
+  stroke-width: 1.4;
+  transition: stroke-width 0.1s var(--ease-out);
+}
+
+.graph-node-root rect {
+  fill: var(--accent-soft);
+  stroke: color-mix(in oklch, var(--accent-strong), var(--danger) calc(var(--err, 0) * 100%));
+}
+
+.graph-node:hover rect,
+.graph-node:focus-visible rect {
+  stroke-width: 2.4;
+}
+
+.graph-node:focus {
+  outline: none;
+}
+
+.graph-node-label {
+  fill: var(--ink);
+  font: 600 12px var(--font-ui);
+}
+
+.graph-node-root .graph-node-label {
+  font-weight: 700;
+}
+
+.graph-node-stats {
+  fill: color-mix(in oklch, var(--muted), var(--danger) calc(var(--err, 0) * 100%));
+  font: 9px var(--font-ui);
+}
+
+.graph-key {
+  position: absolute;
+  top: var(--space-3);
+  left: var(--space-3);
+  display: grid;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklch, var(--surface), transparent 8%);
+  font-size: 0.7rem;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.graph-key-title {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.graph-key-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.graph-tooltip {
+  position: absolute;
+  z-index: 2;
+  max-width: 260px;
+  display: grid;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  font-size: 0.74rem;
+  color: var(--muted-strong);
+  pointer-events: none;
+}
+
+.graph-tooltip strong {
+  color: var(--ink);
+}
+
+.graph-tooltip-call {
+  font-family: var(--font-code);
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
 }
 
 .service-node {

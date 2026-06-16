@@ -102,7 +102,6 @@ scenarios:
         error_rate: 15%
 `;
 
-const p5ScriptPath = "./vendor/p5/p5.min.js";
 const d3ScriptPath = "./vendor/d3/d3.min.js";
 const plotScriptPath = "./vendor/plot/plot.umd.min.js";
 const firstResultTabIndex = 0;
@@ -136,7 +135,7 @@ const state = {
   runBusy: false,
   activeRunID: 0,
   runner: null,
-  p5Loading: null,
+  d3Loading: null,
   plotLoading: null,
   metricChartData: null,
   rawOutput: "",
@@ -1998,22 +1997,22 @@ function renderMap(topology, spans) {
 function renderMapContents(topology, spans) {
   if (!topology) return;
   if (!document.querySelector("#view-map").classList.contains("active")) return;
-  if (topology.graph && window.renderP5Map) {
-    if (!window.p5) {
-      els.map.classList.remove("p5-map");
+  if (topology.graph && window.renderServiceMap) {
+    if (!window.d3) {
+      els.map.classList.remove("graph-map");
       els.map.innerHTML = `<p class="empty">Loading service map.</p>`;
-      loadP5().then(() => {
+      loadD3().then(() => {
         if (activeResultView() === "map" && state.currentTopology === topology) {
           renderMap(topology, spans);
         }
       }).catch(() => {
         if (activeResultView() === "map" && state.currentTopology === topology) {
-          window.renderP5Map(els.map, topology.graph, spans);
+          window.renderServiceMap(els.map, topology.graph, spans);
         }
       });
       return;
     }
-    window.renderP5Map(els.map, topology.graph, spans);
+    window.renderServiceMap(els.map, topology.graph, spans);
     return;
   }
   const counts = new Map();
@@ -2032,22 +2031,23 @@ function renderMapContents(topology, spans) {
   }).join("");
 }
 
-function loadP5() {
-  if (window.p5) return Promise.resolve();
-  if (state.p5Loading) return state.p5Loading;
-  state.p5Loading = loadScript(p5ScriptPath, "Could not load p5");
-  state.p5Loading.catch(() => {
-    state.p5Loading = null;
+// d3 backs both the service map and (as Observable Plot's dependency) the
+// metric charts, so it is vendored and lazy-loaded on first use.
+function loadD3() {
+  if (window.d3) return Promise.resolve();
+  if (state.d3Loading) return state.d3Loading;
+  state.d3Loading = loadScript(d3ScriptPath, "Could not load d3");
+  state.d3Loading.catch(() => {
+    state.d3Loading = null;
   });
-  return state.p5Loading;
+  return state.d3Loading;
 }
 
 // Observable Plot's UMD bundle expects a global d3, so load d3 first.
 function loadPlot() {
   if (window.Plot) return Promise.resolve();
   if (state.plotLoading) return state.plotLoading;
-  state.plotLoading = (window.d3 ? Promise.resolve() : loadScript(d3ScriptPath, "Could not load d3"))
-    .then(() => loadScript(plotScriptPath, "Could not load Observable Plot"));
+  state.plotLoading = loadD3().then(() => loadScript(plotScriptPath, "Could not load Observable Plot"));
   state.plotLoading.catch(() => {
     state.plotLoading = null;
   });
@@ -2092,11 +2092,11 @@ function clearPreview(message) {
 }
 
 function clearMap(message) {
-  if (window.clearP5Map) {
-    window.clearP5Map(els.map, message);
+  if (window.clearServiceMap) {
+    window.clearServiceMap(els.map, message);
     return;
   }
-  els.map.classList.remove("p5-map");
+  els.map.classList.remove("graph-map");
   els.map.innerHTML = `<p class="empty">${escapeHtml(message)}</p>`;
 }
 

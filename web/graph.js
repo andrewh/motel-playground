@@ -3,314 +3,290 @@
   const NODE_H = 38;
   const CELL_W = 206;
   const CELL_H = 92;
-  const CHANNEL_GAP = 10;
-  const CORNER_R = 10;
+  const VIEW_PAD = 28;
+  const SELF_LOOP_R = 22;
+  const ZOOM_MIN = 0.3;
+  const ZOOM_MAX = 4;
+  const ARROW_MARKER_LENGTH = 6;
+  const ARROW_MARKER_HALF_HEIGHT = 3;
+  const ARROW_MARKER_SIZE = 5;
+  const KEY_ARROW_VIEWBOX_WIDTH = 40;
+  const KEY_ARROW_VIEWBOX_HEIGHT = 8;
+  const KEY_ARROW_LINE_START_X = 1;
+  const KEY_ARROW_TIP_X = 36;
+  const KEY_ARROW_BASE_X = 30;
+  const KEY_ARROW_CENTER_Y = 4;
+  const KEY_ARROW_HALF_HEIGHT = 2;
 
-  let sketch = null;
-  let renderToken = 0;
-  let colorProbe = null;
-
-  window.renderP5Map = function renderP5Map(container, graph, spans) {
-    const token = ++renderToken;
-    if (!window.p5) {
-      renderFallback(container, graph, spans);
-      return;
-    }
-    removeSketch();
-    container.innerHTML = "";
-    container.classList.add("p5-map");
+  // Render the service topology as a d3-driven SVG network graph. Nodes keep the
+  // layered col/row placement computed server-side; d3 handles the DOM join,
+  // link curves (d3-shape), and pan/zoom (d3-zoom).
+  window.renderServiceMap = function renderServiceMap(container, graph, spans) {
     try {
-      sketch = new p5((p) => createSketch(p, container, graph, spans), container);
-      verifyCanvasPainted(container, graph, spans, token);
+      if (!window.d3) {
+        renderFallback(container, graph, spans || []);
+        return;
+      }
+      drawMap(container, graph, spans || []);
     } catch (error) {
-      console.warn("p5 map failed; falling back to HTML map", error);
-      renderFallback(container, graph, spans);
+      console.warn("d3 map failed; falling back to HTML map", error);
+      renderFallback(container, graph, spans || []);
     }
   };
 
-  window.clearP5Map = function clearP5Map(container, message) {
-    renderToken++;
-    removeSketch();
-    container.classList.remove("p5-map");
+  window.clearServiceMap = function clearServiceMap(container, message) {
+    clearGraphEvents(container);
+    container.classList.remove("graph-map");
     container.innerHTML = `<p class="empty">${escapeHtml(message || "No service map available.")}</p>`;
   };
 
-  function createSketch(p, container, graph, spans) {
+  function drawMap(container, graph, spans) {
+    const d3 = window.d3;
+    if (!graph || !graph.nodes || !graph.nodes.length) {
+      renderFallback(container, graph, spans);
+      return;
+    }
     const stats = serviceStats(spans);
-    let nodes = [];
-    let edges = [];
-    let hovered = null;
-    let cellW = CELL_W;
-    let cellH = CELL_H;
-    let nodeW = NODE_W;
-    let nodeH = NODE_H;
-    let gridX0 = 0;
-    let gridY0 = 0;
-    let palette = null;
+    const hasSpans = spans.length > 0;
 
-    p.setup = () => {
-      const size = canvasSize(container);
-      p.createCanvas(size.width, size.height);
-      palette = readPalette(container);
-      p.textFont(palette.font);
-
-      const nodeByID = {};
-      nodes = graph.nodes.map((node) => {
-        const copy = { ...node, px: 0, py: 0 };
-        nodeByID[node.id] = copy;
-        return copy;
-      });
-      edges = graph.edges.map((edge) => ({
+    const nodes = graph.nodes.map((node) => ({
+      ...node,
+      x: node.col * CELL_W,
+      y: node.row * CELL_H,
+    }));
+    const nodeByID = new Map(nodes.map((node) => [node.id, node]));
+    const links = (graph.edges ?? [])
+      .map((edge) => ({
         ...edge,
-        from: nodeByID[edge.source],
-        to: nodeByID[edge.target],
-        path: null,
-      }));
-      placeNodes();
+        source: nodeByID.get(edge.source),
+        target: nodeByID.get(edge.target),
+      }))
+      .filter((link) => link.source && link.target);
+    for (const link of links) link.self = link.source === link.target;
+
+    const bounds = boundsOf(nodes, links);
+
+    clearGraphEvents(container);
+    container.classList.add("graph-map");
+    container.innerHTML = "";
+    const root = d3.select(container);
+
+    const svg = root.append("svg")
+      .attr("class", "graph-svg")
+      .attr("role", "img")
+      .attr("aria-label", "Service topology map")
+      .attr("viewBox", `${num(bounds.minX)} ${num(bounds.minY)} ${num(bounds.width)} ${num(bounds.height)}`)
+      .attr("preserveAspectRatio", "xMidYMid meet");
+
+    svg.append("defs").append("marker")
+      .attr("id", "graph-arrow")
+      .attr("viewBox", `0 ${-ARROW_MARKER_HALF_HEIGHT} ${ARROW_MARKER_LENGTH} ${ARROW_MARKER_HALF_HEIGHT * 2}`)
+      .attr("refX", ARROW_MARKER_LENGTH)
+      .attr("refY", 0)
+      .attr("markerWidth", ARROW_MARKER_SIZE)
+      .attr("markerHeight", ARROW_MARKER_SIZE)
+      .attr("orient", "auto")
+      .append("path")
+      .attr("class", "graph-arrowhead")
+      .attr("d", `M 0 ${-ARROW_MARKER_HALF_HEIGHT} L ${ARROW_MARKER_LENGTH} 0 L 0 ${ARROW_MARKER_HALF_HEIGHT} z`);
+
+    const viewport = svg.append("g").attr("class", "graph-viewport");
+    const linkGen = d3.linkHorizontal().x((d) => d.x).y((d) => d.y);
+    const linkPath = (link) => (link.self ? selfLoopPath(link.source) : linkGen(linkEndpoints(link)));
+
+    const linkSel = viewport.append("g").attr("class", "graph-edges")
+      .selectAll("path")
+      .data(links)
+      .join("path")
+      .attr("class", (link) => `graph-edge${link.async ? " graph-edge-async" : ""}`)
+      .attr("fill", "none")
+      .style("stroke-width", (link) => num(edgeWidth(link.weight)))
+      .attr("marker-end", (link) => (link.self ? null : "url(#graph-arrow)"))
+      .attr("d", linkPath);
+
+    const nodeSel = viewport.append("g").attr("class", "graph-nodes")
+      .selectAll("g")
+      .data(nodes)
+      .join("g")
+      .attr("class", (node) => `graph-node${node.isRoot ? " graph-node-root" : ""}`)
+      .attr("data-id", (node) => node.id)
+      .attr("tabindex", 0)
+      .attr("transform", (node) => `translate(${num(node.x)} ${num(node.y)})`)
+      .style("--err", (node) => num(errorLevel(stats.get(node.id))));
+
+    nodeSel.append("rect")
+      .attr("x", -NODE_W / 2)
+      .attr("y", -NODE_H / 2)
+      .attr("width", NODE_W)
+      .attr("height", NODE_H)
+      .attr("rx", 7);
+
+    nodeSel.append("text")
+      .attr("class", "graph-node-label")
+      .attr("text-anchor", "middle")
+      .attr("dominant-baseline", "central")
+      .attr("y", hasSpans ? -5 : 0)
+      .text((node) => truncate(node.id, 18));
+
+    if (hasSpans) {
+      nodeSel.append("text")
+        .attr("class", "graph-node-stats")
+        .attr("text-anchor", "middle")
+        .attr("dominant-baseline", "central")
+        .attr("y", 10)
+        .text((node) => {
+          const item = stats.get(node.id) || { rate: 0, errors: 0 };
+          return `${(item.rate || 0).toFixed(1)}/s · ${item.errors} err`;
+        });
+    }
+
+    // Interaction: hover highlights connected links and shows a tooltip.
+    const tooltip = root.append("div").attr("class", "graph-tooltip").attr("role", "tooltip").property("hidden", true);
+    const activate = (node, element) => {
+      linkSel.classed("is-active", (link) => link.source === node || link.target === node);
+      showTooltip(tooltip.node(), container, element, node, links, stats);
     };
-
-    p.windowResized = () => {
-      const size = canvasSize(container);
-      p.resizeCanvas(size.width, size.height);
-      placeNodes();
+    const deactivate = () => {
+      linkSel.classed("is-active", false);
+      tooltip.property("hidden", true);
     };
-
-    p.draw = () => {
-      p.background(palette.surface);
-      hovered = nodeAt(p.mouseX, p.mouseY);
-      container.style.cursor = hovered ? "pointer" : "default";
-      for (const edge of edges) drawEdge(edge);
-      for (const node of nodes) drawNode(node);
-      if (edges.length) drawLineKey();
-      if (hovered) drawTooltip(hovered);
+    const dismissTooltip = (event) => {
+      if (event.target?.closest?.(".graph-node")) return;
+      deactivate();
+      if (container.contains(document.activeElement) && document.activeElement?.matches?.(".graph-node")) {
+        document.activeElement.blur();
+      }
     };
+    document.addEventListener("pointerdown", dismissTooltip, true);
+    container.__graphCleanup = () => {
+      document.removeEventListener("pointerdown", dismissTooltip, true);
+      root.on(".zoom", null);
+      delete container.__zoom;
+    };
+    nodeSel
+      .on("pointerenter", function (event, node) { activate(node, this); })
+      .on("pointerleave", deactivate)
+      .on("focus", function (event, node) { activate(node, this); })
+      .on("blur", deactivate);
 
-    function placeNodes() {
-      const cols = Math.max(graph.gridCols - 1, 1);
-      const rows = Math.max(graph.gridRows - 1, 1);
-      const marginX = p.width < 560 ? 52 : 90;
-      const marginY = p.height < 380 ? 46 : 68;
-      const scale = Math.min(
-        1,
-        Math.max(0.42, (p.width - marginX * 2) / Math.max(cols * CELL_W, 1)),
-        Math.max(0.48, (p.height - marginY * 2) / Math.max(rows * CELL_H, 1)),
-      );
-      cellW = CELL_W * scale;
-      cellH = CELL_H * scale;
-      nodeW = Math.min(NODE_W, Math.max(72, cellW - 34));
-      nodeH = Math.min(NODE_H, Math.max(30, cellH - 28));
-      gridX0 = (p.width - (graph.gridCols - 1) * cellW) / 2;
-      gridY0 = (p.height - (graph.gridRows - 1) * cellH) / 2;
-      for (const node of nodes) {
-        node.px = gridX0 + node.col * cellW;
-        node.py = gridY0 + node.row * cellH;
+    // Pan / zoom the whole viewport.
+    const zoom = d3.zoom()
+      .scaleExtent([ZOOM_MIN, ZOOM_MAX])
+      .on("zoom", (event) => viewport.attr("transform", event.transform));
+    root.call(zoom);
+
+    if (links.length) root.append("div").attr("class", "graph-key").attr("aria-hidden", "true").html(lineKeyMarkup());
+  }
+
+  function lineKeyMarkup() {
+    const top = KEY_ARROW_CENTER_Y - KEY_ARROW_HALF_HEIGHT;
+    const bottom = KEY_ARROW_CENTER_Y + KEY_ARROW_HALF_HEIGHT;
+    const sample = (extra, style) => `<svg viewBox="0 0 ${KEY_ARROW_VIEWBOX_WIDTH} ${KEY_ARROW_VIEWBOX_HEIGHT}" width="${KEY_ARROW_VIEWBOX_WIDTH}" height="${KEY_ARROW_VIEWBOX_HEIGHT}" aria-hidden="true"><line x1="${KEY_ARROW_LINE_START_X}" y1="${KEY_ARROW_CENTER_Y}" x2="${KEY_ARROW_BASE_X}" y2="${KEY_ARROW_CENTER_Y}" class="graph-edge${extra}"${style ? ` style="${style}"` : ""}></line><polygon points="${KEY_ARROW_TIP_X},${KEY_ARROW_CENTER_Y} ${KEY_ARROW_BASE_X},${top} ${KEY_ARROW_BASE_X},${bottom}" class="graph-key-arrow"></polygon></svg>`;
+    return `<span class="graph-key-title">line key</span>`
+      + `<span class="graph-key-row">${sample("")} sync call</span>`
+      + `<span class="graph-key-row">${sample(" graph-edge-async")} async call</span>`
+      + `<span class="graph-key-row">${sample("", "stroke-width:4")} more calls</span>`;
+  }
+
+  // --- geometry -------------------------------------------------------------
+
+  function linkEndpoints(link) {
+    const s = link.source;
+    const t = link.target;
+    const forward = t.x >= s.x;
+    return {
+      source: { x: s.x + (forward ? NODE_W / 2 : -NODE_W / 2), y: s.y },
+      target: { x: t.x + (forward ? -NODE_W / 2 : NODE_W / 2), y: t.y },
+    };
+  }
+
+  function selfLoopPath(node) {
+    const cx = node.x;
+    const cy = node.y - NODE_H / 2;
+    const start = [cx + SELF_LOOP_R * Math.cos(Math.PI * 0.9), cy + SELF_LOOP_R * Math.sin(Math.PI * 0.9)];
+    const end = [cx + SELF_LOOP_R * Math.cos(Math.PI * 2.1), cy + SELF_LOOP_R * Math.sin(Math.PI * 2.1)];
+    return `M ${num(start[0])} ${num(start[1])} A ${SELF_LOOP_R} ${SELF_LOOP_R} 0 1 1 ${num(end[0])} ${num(end[1])}`;
+  }
+
+  function boundsOf(nodes, links) {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    const include = (x, y) => {
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    };
+    for (const node of nodes) {
+      include(node.x - NODE_W / 2, node.y - NODE_H / 2);
+      include(node.x + NODE_W / 2, node.y + NODE_H / 2);
+    }
+    for (const link of links) {
+      if (link.self) include(link.source.x, link.source.y - NODE_H / 2 - 2 * SELF_LOOP_R);
+    }
+    return {
+      minX: minX - VIEW_PAD,
+      minY: minY - VIEW_PAD,
+      width: maxX - minX + VIEW_PAD * 2,
+      height: maxY - minY + VIEW_PAD * 2,
+    };
+  }
+
+  function errorLevel(item) {
+    if (!item || !item.spans) return 0;
+    return clamp((item.errors / item.spans) * 3, 0, 1);
+  }
+
+  // --- tooltip --------------------------------------------------------------
+
+  function showTooltip(tooltip, container, element, node, links, stats) {
+    if (!tooltip) return;
+    const lines = [`<strong>${escapeHtml(node.id)}${node.isRoot ? " · entry" : ""}</strong>`];
+    const item = stats.get(node.id);
+    if (item) lines.push(`<span>${item.spans} spans, ${item.errors} errors</span>`);
+    for (const operation of node.operations ?? []) lines.push(`<span>${escapeHtml(operation)}</span>`);
+    for (const link of links) {
+      if (link.source !== node) continue;
+      for (const call of link.calls ?? []) {
+        const mods = [];
+        if (call.probability < 1) mods.push(`${Math.round(call.probability * 100)}%`);
+        if (call.count > 1) mods.push(`x${call.count}`);
+        if (call.async) mods.push("async");
+        lines.push(`<span class="graph-tooltip-call">${escapeHtml(`${call.from} -> ${link.target.id}.${call.to}`)}${mods.length ? ` [${escapeHtml(mods.join(", "))}]` : ""}</span>`);
       }
-      buildEdgePaths();
     }
-
-    function buildEdgePaths() {
-      const specs = edges.map((edge) => {
-        if (edge.from === edge.to) return { kind: "self", keys: [] };
-        const sc = edge.from.col;
-        const tc = edge.to.col;
-        if (tc > sc) {
-          if (tc - sc === 1) return { kind: "fwd", keys: edge.from.row === edge.to.row ? [] : [`v${tc}`] };
-          return { kind: "long", keys: [`v${sc + 1}`, `lane${Math.min(edge.from.row, edge.to.row)}`, `v${tc}`] };
-        }
-        if (tc === sc) return { kind: "same", keys: [`r${sc}`] };
-        return { kind: "back", keys: [`v${tc}`, "bottom"] };
-      });
-
-      const counts = {};
-      const claimed = {};
-      for (const spec of specs) {
-        for (const key of spec.keys) counts[key] = (counts[key] || 0) + 1;
-      }
-      const channelSpan = (key) => (key[0] === "v" || key[0] === "r" ? cellW - nodeW - 8 : cellH - nodeH - 8);
-      const offset = (key) => {
-        claimed[key] = (claimed[key] || 0) + 1;
-        const step = Math.min(CHANNEL_GAP, channelSpan(key) / Math.max(counts[key], 1));
-        return (claimed[key] - 1 - (counts[key] - 1) / 2) * step;
-      };
-      const gapX = (col) => gridX0 + (col - 0.5) * cellW;
-
-      edges.forEach((edge, index) => {
-        const spec = specs[index];
-        if (spec.kind === "self") {
-          edge.path = null;
-          return;
-        }
-        const s = edge.from;
-        const t = edge.to;
-        const exitR = s.px + nodeW / 2;
-        const entryL = t.px - nodeW / 2;
-        const entryR = t.px + nodeW / 2;
-        let pts;
-        if (spec.kind === "fwd") {
-          if (s.row === t.row) {
-            pts = [[exitR, s.py], [entryL, t.py]];
-          } else {
-            const x = gapX(t.col) + offset(`v${t.col}`);
-            pts = [[exitR, s.py], [x, s.py], [x, t.py], [entryL, t.py]];
-          }
-        } else if (spec.kind === "long") {
-          const x1 = gapX(s.col + 1) + offset(`v${s.col + 1}`);
-          const laneRow = Math.min(s.row, t.row);
-          const laneY = gridY0 + (laneRow - 0.5) * cellH + offset(`lane${laneRow}`);
-          const x2 = gapX(t.col) + offset(`v${t.col}`);
-          pts = [[exitR, s.py], [x1, s.py], [x1, laneY], [x2, laneY], [x2, t.py], [entryL, t.py]];
-        } else if (spec.kind === "same") {
-          const x = Math.max(s.px, t.px) + nodeW / 2 + 24 + offset(`r${s.col}`);
-          pts = [[exitR, s.py], [x, s.py], [x, t.py], [entryR, t.py]];
-        } else {
-          const x = gapX(t.col) + offset(`v${t.col}`);
-          const laneY = gridY0 + (graph.gridRows - 0.5) * cellH + offset("bottom");
-          pts = [[s.px, s.py + nodeH / 2], [s.px, laneY], [x, laneY], [x, t.py], [entryL, t.py]];
-        }
-        edge.path = makePath(pts);
-      });
+    tooltip.innerHTML = lines.join("");
+    tooltip.hidden = false;
+    if (!element || !element.getBoundingClientRect) return;
+    const anchor = element.getBoundingClientRect();
+    const frame = container.getBoundingClientRect();
+    const margin = 8;
+    let left = anchor.right - frame.left + 10;
+    let top = anchor.top - frame.top;
+    if (left + tooltip.offsetWidth + margin > container.clientWidth) {
+      left = anchor.left - frame.left - tooltip.offsetWidth - 10;
     }
+    left = Math.max(margin, Math.min(left, container.clientWidth - tooltip.offsetWidth - margin));
+    top = Math.max(margin, Math.min(top, container.clientHeight - tooltip.offsetHeight - margin));
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  }
 
-    function drawEdge(edge) {
-      const active = hovered && (edge.from === hovered || edge.to === hovered);
-      const width = edgeWidth(edge.weight);
-      p.stroke(active ? palette.warn : palette.edge);
-      p.strokeWeight(width);
-      p.noFill();
-      if (edge.async) p.drawingContext.setLineDash([6, 6]);
-      if (edge.from === edge.to) {
-        p.arc(edge.from.px, edge.from.py - nodeH / 2, 50, 50, p.PI * 0.9, p.PI * 2.1);
-      } else {
-        const pts = edge.path.pts;
-        const ctx = p.drawingContext;
-        ctx.beginPath();
-        ctx.moveTo(pts[0][0], pts[0][1]);
-        for (let i = 1; i < pts.length - 1; i++) {
-          ctx.arcTo(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], CORNER_R);
-        }
-        ctx.lineTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
-        ctx.stroke();
-        drawArrow(pts[pts.length - 1], pts[pts.length - 2], width, active);
-      }
-      p.drawingContext.setLineDash([]);
-    }
+  // --- helpers --------------------------------------------------------------
 
-    function drawArrow(point, from, width, active) {
-      const angle = Math.atan2(point[1] - from[1], point[0] - from[0]);
-      const size = 7 + width;
-      p.push();
-      p.translate(point[0], point[1]);
-      p.rotate(angle);
-      p.noStroke();
-      p.fill(active ? palette.warn : palette.edge);
-      p.triangle(0, 0, -size, -size / 2.2, -size, size / 2.2);
-      p.pop();
-    }
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
 
-    function drawLineKey() {
-      const x = 12;
-      const y = 12;
-      const width = 144;
-      const height = 78;
-      p.push();
-      p.rectMode(p.CORNER);
-      p.stroke(palette.line);
-      p.strokeWeight(1);
-      p.fill(palette.surface);
-      p.rect(x, y, width, height, 6);
-      p.noStroke();
-      p.fill(palette.muted);
-      p.textAlign(p.LEFT, p.CENTER);
-      p.textStyle(p.NORMAL);
-      p.textSize(10);
-      p.text("line key", x + 10, y + 14);
-      drawLineKeyItem(x + 12, y + 34, "sync call", 1.5, false);
-      drawLineKeyItem(x + 12, y + 52, "async call", 1.5, true);
-      drawLineKeyItem(x + 12, y + 70, "more calls", 4, false);
-      p.pop();
-    }
+  function num(value) {
+    return Math.round(value * 100) / 100;
+  }
 
-    function drawLineKeyItem(x, y, label, width, dashed) {
-      p.stroke(palette.edge);
-      p.strokeWeight(width);
-      if (dashed) p.drawingContext.setLineDash([6, 5]);
-      p.line(x, y, x + 30, y);
-      p.drawingContext.setLineDash([]);
-      p.noStroke();
-      p.fill(palette.edge);
-      p.triangle(x + 34, y, x + 27, y - 4, x + 27, y + 4);
-      p.fill(palette.muted);
-      p.text(label, x + 44, y + 1);
-    }
-
-    function drawNode(node) {
-      const nodeStats = stats.get(node.id) || { spans: 0, errors: 0, rate: 0 };
-      const errorLevel = p.constrain(nodeStats.spans ? (nodeStats.errors / nodeStats.spans) * 3 : 0, 0, 1);
-      const strokeColor = p.lerpColor(p.color(node.isRoot ? palette.accentStrong : palette.edgeStrong), p.color(palette.danger), errorLevel);
-      p.stroke(strokeColor);
-      p.strokeWeight(node === hovered ? 2.4 : 1.4);
-      p.fill(node.isRoot ? palette.accentSoft : palette.node);
-      p.rectMode(p.CENTER);
-      p.rect(node.px, node.py, nodeW, nodeH, 7);
-      p.noStroke();
-      p.fill(palette.ink);
-      p.textAlign(p.CENTER, p.CENTER);
-      p.textStyle(node.isRoot ? p.BOLD : p.NORMAL);
-      p.textSize(Math.max(9, Math.min(12, nodeW / 9)));
-      p.text(node.id, node.px, node.py - (spans.length ? 7 : 0), nodeW - 10, nodeH / 2);
-      if (spans.length && nodeW >= 86) {
-        p.textStyle(p.NORMAL);
-        p.textSize(9);
-        p.fill(errorLevel > 0 ? strokeColor : palette.muted);
-        p.text(`${nodeStats.rate.toFixed(1)}/s · ${nodeStats.errors} err`, node.px, node.py + 9);
-      }
-      p.textStyle(p.NORMAL);
-    }
-
-    function drawTooltip(node) {
-      const lines = [node.id + (node.isRoot ? "  entry" : "")];
-      const nodeStats = stats.get(node.id);
-      if (nodeStats) lines.push(`  ${nodeStats.spans} spans, ${nodeStats.errors} errors`);
-      for (const operation of node.operations) lines.push(`  ${operation}`);
-      for (const edge of edges) {
-        if (edge.from !== node) continue;
-        for (const call of edge.calls) {
-          const mods = [];
-          if (call.probability < 1) mods.push(`${Math.round(call.probability * 100)}%`);
-          if (call.count > 1) mods.push(`x${call.count}`);
-          if (call.async) mods.push("async");
-          lines.push(`  ${call.from} -> ${edge.target}.${call.to}${mods.length ? ` [${mods.join(", ")}]` : ""}`);
-        }
-      }
-      p.textSize(11);
-      let boxW = 0;
-      for (const line of lines) boxW = Math.max(boxW, p.textWidth(line));
-      boxW += 22;
-      const boxH = lines.length * 16 + 12;
-      const tx = p.constrain(node.px + nodeW / 2 + 10, 4, p.width - boxW - 4);
-      const ty = p.constrain(node.py - boxH / 2, 4, p.height - boxH - 4);
-      p.rectMode(p.CORNER);
-      p.stroke(palette.line);
-      p.strokeWeight(1);
-      p.fill(palette.tooltip);
-      p.rect(tx, ty, boxW, boxH, 6);
-      p.noStroke();
-      p.textAlign(p.LEFT, p.TOP);
-      lines.forEach((line, index) => {
-        p.fill(index === 0 ? palette.ink : palette.muted);
-        p.textStyle(index === 0 ? p.BOLD : p.NORMAL);
-        p.text(line, tx + 10, ty + 8 + index * 16);
-      });
-      p.textStyle(p.NORMAL);
-    }
-
-    function nodeAt(x, y) {
-      for (let i = nodes.length - 1; i >= 0; i--) {
-        const node = nodes[i];
-        if (Math.abs(x - node.px) <= nodeW / 2 && Math.abs(y - node.py) <= nodeH / 2) return node;
-      }
-      return null;
-    }
+  function truncate(value, max) {
+    const text = String(value);
+    return text.length > max ? `${text.slice(0, max - 1)}…` : text;
   }
 
   function serviceStats(spans) {
@@ -331,129 +307,28 @@
     return stats;
   }
 
-  function canvasSize(container) {
-    const rect = container.getBoundingClientRect();
-    return {
-      width: Math.max(320, Math.floor(rect.width || 640)),
-      height: Math.max(360, Math.floor(rect.height || 480)),
-    };
-  }
-
   function edgeWidth(weight) {
-    return 1 + 2.5 * Math.log(1 + weight);
+    return 1 + 2.5 * Math.log(1 + (Number(weight) || 0));
   }
 
-  function readPalette(container) {
-    const style = getComputedStyle(container);
-    const value = (name, fallback) => resolveColor(style.getPropertyValue(name).trim() || fallback);
-    return {
-      font: style.getPropertyValue("--font-ui").trim() || "Avenir Next, Segoe UI, system-ui, sans-serif",
-      surface: value("--surface", "#fafafa"),
-      node: value("--surface-raised", "#f4f4f4"),
-      tooltip: value("--surface", "#fafafa"),
-      ink: value("--ink", "#2e2e2e"),
-      muted: value("--muted", "#747474"),
-      line: value("--line", "#d1d1d1"),
-      edge: value("--line-strong", "#9a9a9a"),
-      edgeStrong: value("--muted-strong", "#555555"),
-      accent: value("--accent", "#4b4b4b"),
-      accentStrong: value("--accent-strong", "#2e2e2e"),
-      accentSoft: value("--accent-soft", "#dddddd"),
-      warn: value("--warn", "#666666"),
-      danger: value("--danger", "#5c5c5c"),
-    };
-  }
-
-  function resolveColor(color) {
-    const canvasColor = canvasResolvedColor(color);
-    if (canvasColor) return canvasColor;
-    const probe = document.createElement("span");
-    probe.style.color = color;
-    probe.style.position = "absolute";
-    probe.style.visibility = "hidden";
-    document.body.appendChild(probe);
-    const resolved = getComputedStyle(probe).color;
-    probe.remove();
-    return canvasResolvedColor(resolved) || resolved || color;
-  }
-
-  function canvasResolvedColor(color) {
-    if (!color) return "";
-    if (!colorProbe) {
-      const canvas = document.createElement("canvas");
-      canvas.width = 1;
-      canvas.height = 1;
-      colorProbe = canvas.getContext("2d", { willReadFrequently: true });
-    }
-    if (!colorProbe) return "";
-    colorProbe.clearRect(0, 0, 1, 1);
-    colorProbe.fillStyle = "rgba(0, 0, 0, 0)";
-    try {
-      colorProbe.fillStyle = color;
-    } catch {
-      return "";
-    }
-    colorProbe.fillRect(0, 0, 1, 1);
-    const [r, g, b, a] = colorProbe.getImageData(0, 0, 1, 1).data;
-    if (a === 0) return "";
-    const alpha = Math.round((a / 255) * 1000) / 1000;
-    return alpha >= 1 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-
-  function verifyCanvasPainted(container, graph, spans, token) {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (token !== renderToken) return;
-        if (!canvasHasInk(container)) {
-          console.warn("p5 map rendered a blank canvas; falling back to HTML map");
-          renderFallback(container, graph, spans);
-        }
-      });
-    });
-  }
-
-  function canvasHasInk(container) {
-    const canvas = container.querySelector("canvas");
-    if (!canvas || !canvas.width || !canvas.height) return false;
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) return false;
-    const { data, width, height } = context.getImageData(0, 0, canvas.width, canvas.height);
-    if (!width || !height || data.length < 4) return false;
-    const step = Math.max(1, Math.floor((width * height) / 8000));
-    const base = [data[0], data[1], data[2], data[3]];
-    for (let pixel = step; pixel < width * height; pixel += step) {
-      const index = pixel * 4;
-      const delta = Math.abs(data[index] - base[0])
-        + Math.abs(data[index + 1] - base[1])
-        + Math.abs(data[index + 2] - base[2])
-        + Math.abs(data[index + 3] - base[3]);
-      if (delta > 8) return true;
-    }
-    return false;
-  }
-
-  function removeSketch() {
-    if (!sketch) return;
-    sketch.remove();
-    sketch = null;
-  }
-
-  function makePath(rawPts) {
-    const pts = [rawPts[0]];
-    for (const point of rawPts.slice(1)) {
-      const last = pts[pts.length - 1];
-      if (Math.abs(point[0] - last[0]) > 0.01 || Math.abs(point[1] - last[1]) > 0.01) pts.push(point);
-    }
-    return { pts };
+  function clearGraphEvents(container) {
+    if (!container.__graphCleanup) return;
+    container.__graphCleanup();
+    delete container.__graphCleanup;
   }
 
   function renderFallback(container, graph, spans) {
-    removeSketch();
-    const counts = serviceStats(spans);
-    container.classList.remove("p5-map");
-    container.innerHTML = graph.nodes.map((node) => {
+    clearGraphEvents(container);
+    const counts = serviceStats(spans || []);
+    container.classList.remove("graph-map");
+    const nodes = graph?.nodes ?? [];
+    if (!nodes.length) {
+      container.innerHTML = `<p class="empty">No service map available.</p>`;
+      return;
+    }
+    container.innerHTML = nodes.map((node) => {
       const item = counts.get(node.id) || { spans: 0, errors: 0 };
-      return `<section class="service-node"><div><strong>${escapeHtml(node.id)}</strong><span>${item.spans} spans</span></div><ol>${node.operations.map((op) => `<li><span>${escapeHtml(op)}</span></li>`).join("")}</ol></section>`;
+      return `<section class="service-node"><div><strong>${escapeHtml(node.id)}</strong><span>${item.spans} spans</span></div><ol>${(node.operations ?? []).map((op) => `<li><span>${escapeHtml(op)}</span></li>`).join("")}</ol></section>`;
     }).join("");
   }
 
