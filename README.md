@@ -19,16 +19,18 @@ from one-shot runs into a live observability workbench.
 - `andrewh/motel` checked out as a Git submodule at `third_party/motel` so the
   playground can build against a pinned engine revision without copying the
   whole codebase into this repository.
-- Vendored p5.js for graph rendering, so the playground can run without loading
-  runtime dependencies from a CDN.
+- Vendored p5.js for graph rendering and Observable Plot (with d3) for the
+  metric charts, so the playground can run without loading runtime dependencies
+  from a CDN.
 
 Generated artifacts are intentionally ignored:
 
 - `web/motel.wasm`
 - `web/wasm_exec.js`
 
-Vendored browser dependencies live under `web/vendor/`; p5.js is pinned at
-`1.11.3` with its license in `web/vendor/p5/LICENSE.txt`.
+Vendored browser dependencies live under `web/vendor/`, each with its license:
+p5.js is pinned at `1.11.3` (`web/vendor/p5/`), Observable Plot at `0.6.17`
+(`web/vendor/plot/`), and its d3 dependency at `7.9.0` (`web/vendor/d3/`).
 
 ## Sharing configurations
 

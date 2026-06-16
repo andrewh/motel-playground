@@ -103,6 +103,8 @@ scenarios:
 `;
 
 const p5ScriptPath = "./vendor/p5/p5.min.js";
+const d3ScriptPath = "./vendor/d3/d3.min.js";
+const plotScriptPath = "./vendor/plot/plot.umd.min.js";
 const firstResultTabIndex = 0;
 const nextResultTabOffset = 1;
 const previousResultTabOffset = -1;
@@ -135,6 +137,8 @@ const state = {
   activeRunID: 0,
   runner: null,
   p5Loading: null,
+  plotLoading: null,
+  metricChartData: null,
   rawOutput: "",
   rawOutputJSON: false,
   rawOutputDirty: false,
@@ -197,6 +201,7 @@ const els = {
   traces: document.querySelector("#traces"),
   errorFilter: document.querySelector("#error-filter"),
   spanFilterCount: document.querySelector("#span-filter-count"),
+  metricCharts: document.querySelector("#metric-charts"),
   signalMetrics: document.querySelector("#signal-metrics"),
   signalLogs: document.querySelector("#signal-logs"),
   logSeverityFilter: document.querySelector("#log-severity-filter"),
@@ -1463,6 +1468,7 @@ function renderRunWorkerError(error) {
 
 function renderMetrics(metrics, { enabled = true } = {}) {
   if (!enabled) {
+    clearMetricCharts();
     els.signalMetrics.innerHTML = `<p class="empty">Metrics disabled for this run.</p>`;
     return;
   }
@@ -1470,13 +1476,16 @@ function renderMetrics(metrics, { enabled = true } = {}) {
   const ordered = metrics.slice().sort(compareSignals);
   const visible = filter ? ordered.filter((metric) => signalMatchesFilter(metric, filter)) : ordered;
   if (ordered.length === 0) {
+    clearMetricCharts();
     els.signalMetrics.innerHTML = `<p class="empty">No metrics captured yet.</p>`;
     return;
   }
   if (visible.length === 0) {
+    clearMetricCharts();
     els.signalMetrics.innerHTML = `<p class="empty">No metrics match this filter.</p>`;
     return;
   }
+  renderMetricCharts(visible);
   els.signalMetrics.innerHTML = visible.map((metric, index) => {
     const panelID = `metric-panel-${index}`;
     return `<article class="signal-item">
@@ -1512,6 +1521,179 @@ function renderMetricDetails(metric) {
   ${attributes.length ? `<dl class="span-attributes">
     ${attributes.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}
   </dl>` : `<p class="empty span-empty">No metric attributes.</p>`}`;
+}
+
+const metricSeriesPalette = [
+  "var(--accent)",
+  "var(--danger)",
+  "var(--ready-ink)",
+  "var(--accent-strong)",
+  "var(--muted-strong)",
+  "var(--warn)",
+];
+const maxMetricSeries = 6;
+const metricChartWidth = 360;
+const metricChartHeight = 150;
+
+function clearMetricCharts() {
+  state.metricChartData = null;
+  els.metricCharts.replaceChildren();
+}
+
+// Render is split from draw so the (lazy-loaded) Observable Plot bundle can fill
+// in once it arrives without blocking the synchronous metric list render.
+function renderMetricCharts(metrics) {
+  state.metricChartData = metrics;
+  if (!metrics.length) {
+    els.metricCharts.replaceChildren();
+    return;
+  }
+  if (!window.Plot) {
+    els.metricCharts.innerHTML = `<p class="empty">Loading charts.</p>`;
+    loadPlot()
+      .then(() => {
+        if (state.metricChartData === metrics) drawMetricCharts(metrics);
+      })
+      .catch(() => {
+        if (state.metricChartData === metrics) {
+          els.metricCharts.innerHTML = `<p class="empty">Charts unavailable; see the metric list below.</p>`;
+        }
+      });
+    return;
+  }
+  drawMetricCharts(metrics);
+}
+
+function drawMetricCharts(metrics) {
+  const groups = groupMetricsByName(metrics);
+  const cards = [];
+  for (const [name, events] of groups) {
+    cards.push(buildMetricChartCard(name, events));
+  }
+  els.metricCharts.replaceChildren(...cards);
+}
+
+function groupMetricsByName(metrics) {
+  const groups = new Map();
+  for (const metric of metrics) {
+    const name = metric.name || "(unnamed metric)";
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(metric);
+  }
+  return groups;
+}
+
+// A numeric value suitable for plotting. Histograms collapse to their mean so a
+// single series stays comparable with gauge/counter values.
+function metricChartValue(metric) {
+  if (metric.type === "histogram" && metric.count) {
+    return metric.sum / metric.count;
+  }
+  return Number.isFinite(metric.value) ? metric.value : 0;
+}
+
+function metricSeriesKey(metric) {
+  const context = signalContext(metric);
+  const attrs = Object.entries(metric.attributes ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ");
+  return attrs ? `${context} · ${attrs}` : context;
+}
+
+function buildMetricChartCard(name, events) {
+  const type = events[0]?.type || "metric";
+  const unit = events.find((event) => event.unit)?.unit || "";
+  const rows = events.map((event) => ({
+    series: metricSeriesKey(event),
+    time: new Date(Number.isFinite(event.timestamp_ms) && event.timestamp_ms > 0 ? event.timestamp_ms : Date.now()),
+    value: metricChartValue(event),
+  }));
+  // Keep only the busiest series so the colour range and legend stay readable.
+  const peakBySeries = new Map();
+  for (const row of rows) {
+    peakBySeries.set(row.series, Math.max(peakBySeries.get(row.series) ?? -Infinity, row.value));
+  }
+  const domain = [...peakBySeries.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, maxMetricSeries)
+    .map(([series]) => series);
+  const allowed = new Set(domain);
+  const visibleRows = rows.filter((row) => allowed.has(row.series));
+  const hidden = peakBySeries.size - allowed.size;
+  const overTime = new Set(events.map((event) => event.timestamp_ms ?? 0)).size > 1;
+
+  const figure = document.createElement("figure");
+  figure.className = "metric-chart";
+  const caption = document.createElement("figcaption");
+  caption.innerHTML = `<strong>${escapeHtml(name)}</strong>
+    <span class="metric-chart-kind">${escapeHtml(type)}${unit ? ` (${escapeHtml(unit)})` : ""}</span>`;
+  figure.append(caption);
+  const plot = overTime
+    ? metricTimeSeriesPlot(visibleRows, unit, domain)
+    : metricBarPlot(visibleRows, unit, domain);
+  figure.append(makeMetricPlotResponsive(plot));
+  if (hidden > 0) {
+    const more = document.createElement("p");
+    more.className = "metric-legend-more";
+    more.textContent = `+${hidden} more series not shown`;
+    figure.append(more);
+  }
+  return figure;
+}
+
+function metricPlotOptions(unit, domain) {
+  return {
+    width: metricChartWidth,
+    height: metricChartHeight,
+    marginLeft: 52,
+    style: { background: "transparent", color: "currentColor", overflow: "visible" },
+    y: { label: unit || null, grid: true, nice: true },
+    color: { domain, range: metricSeriesPalette, legend: domain.length > 1 },
+  };
+}
+
+function metricTimeSeriesPlot(rows, unit, domain) {
+  const Plot = window.Plot;
+  return Plot.plot({
+    ...metricPlotOptions(unit, domain),
+    x: { type: "time", label: null, ticks: 4 },
+    marks: [
+      Plot.ruleY([0]),
+      Plot.lineY(rows, { x: "time", y: "value", stroke: "series", curve: "monotone-x" }),
+      Plot.dot(rows, { x: "time", y: "value", fill: "series", r: 2.5, tip: true }),
+    ],
+  });
+}
+
+function metricBarPlot(rows, unit, domain) {
+  const Plot = window.Plot;
+  return Plot.plot({
+    ...metricPlotOptions(unit, domain),
+    x: { domain, label: null, axis: null },
+    marks: [
+      Plot.ruleY([0]),
+      Plot.barY(rows, Plot.groupX({ y: "sum" }, { x: "series", y: "value", fill: "series", tip: true })),
+    ],
+  });
+}
+
+// Plot emits fixed-size charts; swap to a viewBox so the chart svg (but not the
+// small HTML legend swatches) scales with its card.
+function makeMetricPlotResponsive(node) {
+  const svg = node.tagName.toLowerCase() === "svg" ? node : node.querySelector(":scope > svg");
+  if (svg) {
+    const width = svg.getAttribute("width");
+    const height = svg.getAttribute("height");
+    if (width && height && !svg.getAttribute("viewBox")) {
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    }
+    svg.removeAttribute("width");
+    svg.removeAttribute("height");
+    svg.style.maxWidth = "100%";
+    svg.style.height = "auto";
+  }
+  return node;
 }
 
 function renderLogs(logs, { enabled = true } = {}) {
@@ -1853,18 +2035,34 @@ function renderMapContents(topology, spans) {
 function loadP5() {
   if (window.p5) return Promise.resolve();
   if (state.p5Loading) return state.p5Loading;
-  state.p5Loading = new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = p5ScriptPath;
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => {
-      state.p5Loading = null;
-      reject(new Error("Could not load p5"));
-    };
-    document.head.append(script);
+  state.p5Loading = loadScript(p5ScriptPath, "Could not load p5");
+  state.p5Loading.catch(() => {
+    state.p5Loading = null;
   });
   return state.p5Loading;
+}
+
+// Observable Plot's UMD bundle expects a global d3, so load d3 first.
+function loadPlot() {
+  if (window.Plot) return Promise.resolve();
+  if (state.plotLoading) return state.plotLoading;
+  state.plotLoading = (window.d3 ? Promise.resolve() : loadScript(d3ScriptPath, "Could not load d3"))
+    .then(() => loadScript(plotScriptPath, "Could not load Observable Plot"));
+  state.plotLoading.catch(() => {
+    state.plotLoading = null;
+  });
+  return state.plotLoading;
+}
+
+function loadScript(src, errorMessage) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error(errorMessage));
+    document.head.append(script);
+  });
 }
 
 function clearRunOutput(message) {
@@ -1884,6 +2082,7 @@ function clearRunOutput(message) {
 function clearSignalOutput(metricMessage = emptyCopy.metrics, logMessage = emptyCopy.logs) {
   state.warnLogsOnly = false;
   syncLogFilter(0, 0);
+  clearMetricCharts();
   els.signalMetrics.innerHTML = `<p class="empty">${escapeHtml(metricMessage)}</p>`;
   els.signalLogs.innerHTML = `<p class="empty">${escapeHtml(logMessage)}</p>`;
 }
