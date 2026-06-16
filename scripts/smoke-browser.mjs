@@ -35,6 +35,19 @@ services:
 traffic:
   rate: 6/s
 `;
+const slowLogTopology = `version: 1
+services:
+  gateway:
+    operations:
+      GET /slow:
+        duration: 20ms +/- 1ms
+        logs:
+          - severity: WARN
+            body: "slow request {operation.name}"
+            condition: slow
+traffic:
+  rate: 3/s
+`;
 
 class CDPClient {
   static connect(url) {
@@ -285,7 +298,7 @@ try {
 
   const durationControl = await evaluate(client, `(() => {
     const input = document.querySelector("#duration");
-    return { value: input.value, min: input.min, max: input.max, step: input.step, label: input.closest("label")?.textContent.trim() };
+    return { value: input.value, min: input.min, max: input.max, step: input.step, label: input.closest(".duration-control")?.textContent.trim() };
   })()`);
   if (
     durationControl.value !== "1"
@@ -346,6 +359,48 @@ try {
   await evaluate(client, `document.querySelector("#trace-input").value = ""`);
   await evaluate(client, `document.querySelector("#validate-button").click()`);
   await waitFor(async () => evaluate(client, `document.querySelector("#validate-button").classList.contains("validated")`), "sample revalidated after trace import");
+
+  const slowThresholdControl = await evaluate(client, `(() => {
+    const input = document.querySelector("#slow-threshold");
+    const field = input.closest(".slow-threshold-field");
+    const duration = document.querySelector(".duration-control");
+    const fieldBox = field.getBoundingClientRect();
+    const durationBox = duration.getBoundingClientRect();
+    return {
+      value: input.value,
+      min: input.min,
+      step: input.step,
+      label: field?.textContent.trim(),
+      secondaryRow: Boolean(input.closest(".control-row-secondary")),
+      belowPrimaryRow: fieldBox.top > durationBox.bottom,
+      comfortableWidth: input.getBoundingClientRect().width >= 80,
+    };
+  })()`);
+  if (
+    slowThresholdControl.value !== "0"
+    || slowThresholdControl.min !== "0"
+    || slowThresholdControl.step !== "10"
+    || !slowThresholdControl.label.includes("Slow threshold")
+    || !slowThresholdControl.label.includes("ms")
+    || !slowThresholdControl.secondaryRow
+    || !slowThresholdControl.belowPrimaryRow
+    || !slowThresholdControl.comfortableWidth
+  ) {
+    throw new Error(`slow-threshold control has unexpected secondary-row defaults: ${JSON.stringify(slowThresholdControl)}`);
+  }
+  await setEditorValue(client, slowLogTopology);
+  await evaluate(client, `document.querySelector("#duration").value = "1"`);
+  await evaluate(client, `document.querySelector("#slow-threshold").value = "1"`);
+  await evaluate(client, `document.querySelector("#run-button").click()`);
+  const slowLogRun = await waitFor(async () => {
+    const state = await evaluate(client, `(${signalTabState})("logs")`);
+    return state.rows > 0 && state.text.includes("slow request GET /slow") ? state : false;
+  }, "slow-threshold log rendered");
+  if (!slowLogRun.text.includes("WARN")) {
+    throw new Error(`slow-threshold log did not expose warn severity: ${JSON.stringify(slowLogRun)}`);
+  }
+  await setEditorValue(client, sampleTopology);
+  await evaluate(client, `document.querySelector("#slow-threshold").value = "0"`);
   await evaluate(client, `(() => {
     window.__lastShareCopy = "";
     try {
@@ -363,6 +418,8 @@ try {
   await evaluate(client, `document.querySelector("#duration").value = "2.5"`);
   await evaluate(client, `document.querySelector("#seed").value = "314"`);
   await evaluate(client, `document.querySelector("#max-nodes").value = "4"`);
+  await evaluate(client, `document.querySelector("#slow-threshold").value = "250"`);
+  await setSignalControls(client, { traces: true, metrics: false, logs: true });
   await setResultFilter(client, "gateway");
   await evaluate(client, `document.querySelector("[data-view='logs']").click()`);
   await evaluate(client, `document.querySelector("#share-button").click()`);
@@ -382,8 +439,12 @@ try {
       && state.preview
       && state.topology === sampleTopology
       && state.duration === "2.5"
+      && state.slowThreshold === "250"
       && state.seed === "314"
       && state.maxNodes === "4"
+      && state.signals.traces === true
+      && state.signals.metrics === false
+      && state.signals.logs === true
       && state.filter === "gateway"
       && state.activeView === "logs"
       ? state
@@ -414,8 +475,10 @@ try {
 
   await setEditorValue(client, sampleTopology);
   await setResultFilter(client, "");
+  await setSignalControls(client, { traces: true, metrics: true, logs: true });
   await evaluate(client, `document.querySelector("[data-view='preview']").click()`);
   await evaluate(client, `document.querySelector("#duration").value = "1"`);
+  await evaluate(client, `document.querySelector("#slow-threshold").value = "0"`);
   await evaluate(client, `document.querySelector("#seed").value = "42"`);
   await evaluate(client, `document.querySelector("#validate-button").click()`);
   await waitFor(async () => evaluate(client, `document.querySelector("#validate-button").classList.contains("validated")`), "sample revalidated after share checks");
@@ -469,13 +532,17 @@ try {
     const state = await evaluate(client, `(${resultDownloadState})()`);
     return state.ready ? state : false;
   }, "result JSON exported");
-  if (
-    exportedResults.kind !== "motel-playground-run"
-    || exportedResults.seed !== "42"
-    || exportedResults.traces < 1
+	  if (
+	    exportedResults.kind !== "motel-playground-run"
+	    || exportedResults.seed !== "42"
+	    || exportedResults.slowThreshold !== "0"
+	    || exportedResults.traces < 1
     || exportedResults.spans < 1
     || exportedResults.metrics < 1
     || exportedResults.logs < 1
+    || exportedResults.signals?.traces !== true
+    || exportedResults.signals?.metrics !== true
+    || exportedResults.signals?.logs !== true
     || !exportedResults.topology.includes("gateway.request.duration")
   ) {
     throw new Error(`result export did not include the full run: ${JSON.stringify(exportedResults)}`);
@@ -492,9 +559,13 @@ try {
     return state.ready ? state : false;
   }, "result JSON imported");
   if (
-    !importedResults.topologyRestored
-    || importedResults.duration !== "1"
-    || importedResults.seed !== "42"
+	    !importedResults.topologyRestored
+	    || importedResults.duration !== "1"
+	    || importedResults.slowThreshold !== "0"
+	    || importedResults.seed !== "42"
+    || importedResults.signals.traces !== true
+    || importedResults.signals.metrics !== true
+    || importedResults.signals.logs !== true
     || importedResults.traces < 1
     || importedResults.metrics < 1
     || importedResults.logs < 1
@@ -571,6 +642,22 @@ try {
     throw new Error(`span attribute filter did not expose matching span: ${JSON.stringify(attributeFilter)}`);
   }
   await setResultFilter(client, "");
+
+  await setSignalControls(client, { traces: false, metrics: false, logs: false });
+  await evaluate(client, `document.querySelector("#run-button").click()`);
+  const disabledSignals = await waitFor(async () => {
+    const state = await evaluate(client, `(${disabledSignalState})()`);
+    return state.statsSpans > 0
+      && state.tracesDisabled
+      && state.metricsDisabled
+      && state.logsDisabled
+      ? state
+      : false;
+  }, "disabled signal run rendered");
+  if (disabledSignals.traceRows || disabledSignals.metricRows || disabledSignals.logRows) {
+    throw new Error(`disabled signal run still rendered signal rows: ${JSON.stringify(disabledSignals)}`);
+  }
+  await setSignalControls(client, { traces: true, metrics: true, logs: true });
 
   await setEditorValue(client, erroredTopology);
   await evaluate(client, `document.querySelector("#validate-button").click()`);
@@ -743,7 +830,8 @@ async function evaluate(client, expression) {
     returnByValue: true,
   });
   if (response.exceptionDetails) {
-    throw new Error(response.exceptionDetails.text || "Runtime.evaluate failed");
+    const details = response.exceptionDetails;
+    throw new Error(details.exception?.description || details.text || "Runtime.evaluate failed");
   }
   return response.result.value;
 }
@@ -769,6 +857,19 @@ async function setResultFilter(client, value) {
       const input = document.querySelector("#result-filter");
       input.value = ${JSON.stringify(value)};
       input.dispatchEvent(new Event("input", { bubbles: true }));
+    })()
+  `);
+}
+
+async function setSignalControls(client, signals) {
+  await evaluate(client, `
+    (() => {
+      const signals = ${JSON.stringify(signals)};
+      for (const [name, enabled] of Object.entries(signals)) {
+        const input = document.querySelector(\`#run-signal-\${name}\`);
+        input.checked = enabled;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
     })()
   `);
 }
@@ -948,13 +1049,20 @@ function shareCopyState() {
 }
 
 function shareRestoreState() {
+  const checked = (selector) => document.querySelector(selector)?.checked ?? null;
   return {
     ready: document.querySelector("#runtime-status")?.textContent === "Runtime ready",
     preview: Boolean(document.querySelector("#preview svg")),
     topology: window.motelPlayground?.getTopology(),
     duration: document.querySelector("#duration")?.value ?? "",
+    slowThreshold: document.querySelector("#slow-threshold")?.value ?? "",
     seed: document.querySelector("#seed")?.value ?? "",
     maxNodes: document.querySelector("#max-nodes")?.value ?? "",
+    signals: {
+      traces: checked("#run-signal-traces"),
+      metrics: checked("#run-signal-metrics"),
+      logs: checked("#run-signal-logs"),
+    },
     filter: document.querySelector("#result-filter")?.value ?? "",
     activeView: document.querySelector(".tab.active")?.dataset.view,
     path: window.location.pathname,
@@ -1033,8 +1141,10 @@ async function resultDownloadState() {
   return {
     ready: Boolean(json),
     text,
-    kind: json?.kind,
-    seed: json?.settings?.seed,
+	    kind: json?.kind,
+	    seed: json?.settings?.seed,
+	    slowThreshold: json?.settings?.slowThresholdMs,
+	    signals: json?.settings?.signals,
     topology: json?.topology || "",
     traces: json?.result?.stats?.traces ?? 0,
     spans: json?.result?.stats?.spans ?? 0,
@@ -1046,12 +1156,19 @@ async function resultDownloadState() {
 }
 
 function resultImportState() {
+  const checked = (selector) => document.querySelector(selector)?.checked ?? null;
   return {
     ready: document.querySelector("#share-status").textContent.includes("Imported")
       && document.querySelector("#summary-line").textContent.includes("Imported run"),
-    topologyRestored: window.motelPlayground?.getTopology().includes("gateway.request.duration"),
-    duration: document.querySelector("#duration").value,
-    seed: document.querySelector("#seed").value,
+	    topologyRestored: window.motelPlayground?.getTopology().includes("gateway.request.duration"),
+	    duration: document.querySelector("#duration").value,
+	    slowThreshold: document.querySelector("#slow-threshold").value,
+	    seed: document.querySelector("#seed").value,
+    signals: {
+      traces: checked("#run-signal-traces"),
+      metrics: checked("#run-signal-metrics"),
+      logs: checked("#run-signal-logs"),
+    },
     traces: Number(document.querySelector("#metric-traces").textContent),
     spans: Number(document.querySelector("#metric-spans").textContent),
     metrics: document.querySelectorAll("#signal-metrics .signal-item").length,
@@ -1127,6 +1244,24 @@ function signalTabState(kind) {
   return {
     rows: root.querySelectorAll(".signal-item").length,
     text: root.textContent,
+  };
+}
+
+function disabledSignalState() {
+  const checked = (selector) => document.querySelector(selector)?.checked ?? null;
+  return {
+    statsSpans: Number(document.querySelector("#metric-spans").textContent),
+    tracesDisabled: document.querySelector("#traces").textContent.includes("Traces disabled"),
+    metricsDisabled: document.querySelector("#signal-metrics").textContent.includes("Metrics disabled"),
+    logsDisabled: document.querySelector("#signal-logs").textContent.includes("Logs disabled"),
+    traceRows: document.querySelectorAll("#traces .trace-group").length,
+    metricRows: document.querySelectorAll("#signal-metrics .signal-item").length,
+    logRows: document.querySelectorAll("#signal-logs .signal-item").length,
+    controls: {
+      traces: checked("#run-signal-traces"),
+      metrics: checked("#run-signal-metrics"),
+      logs: checked("#run-signal-logs"),
+    },
   };
 }
 

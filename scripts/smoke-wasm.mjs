@@ -63,6 +63,20 @@ scenarios:
           - target: cache.get
 `;
 
+const slowLogTopology = `version: 1
+services:
+  gateway:
+    operations:
+      GET /slow:
+        duration: 20ms +/- 1ms
+        logs:
+          - severity: WARN
+            body: "slow request {operation.name}"
+            condition: slow
+traffic:
+  rate: 3/s
+`;
+
 const validation = JSON.parse(await globalThis.motelValidate(topology));
 if (!validation.ok) {
   throw new Error(`validation failed: ${JSON.stringify(validation.diagnostics)}`);
@@ -139,6 +153,29 @@ if (!autoImportedTopology.ok || !autoImportedTopology.topology.includes("GET /us
 const rejectedTraceImport = JSON.parse(await globalThis.motelImportTraces(traceFixture, "zipkin"));
 if (rejectedTraceImport.ok || !rejectedTraceImport.diagnostics?.[0]?.message.includes("unknown trace format")) {
   throw new Error(`trace import accepted an unknown format: ${JSON.stringify(rejectedTraceImport)}`);
+}
+
+const metricsOnlyRun = JSON.parse(await globalThis.motelRun(topology, 1, 7, { traces: false, metrics: true, logs: false }));
+if (
+  !metricsOnlyRun.ok
+  || metricsOnlyRun.signals?.traces !== false
+  || metricsOnlyRun.signals?.metrics !== true
+  || metricsOnlyRun.signals?.logs !== false
+  || metricsOnlyRun.stats.spans < 1
+  || metricsOnlyRun.spans?.length
+  || !metricsOnlyRun.metrics?.some((metric) => metric.name === "gateway.request.duration")
+  || metricsOnlyRun.logs?.length
+) {
+  throw new Error(`signal selection was not applied: ${JSON.stringify(metricsOnlyRun)}`);
+}
+
+const slowDisabledRun = JSON.parse(await globalThis.motelRun(slowLogTopology, 1, 7, { traces: true, metrics: true, logs: true }, 0));
+if (!slowDisabledRun.ok || slowDisabledRun.logs?.length) {
+  throw new Error(`zero slow threshold should suppress slow logs: ${JSON.stringify(slowDisabledRun)}`);
+}
+const slowEnabledRun = JSON.parse(await globalThis.motelRun(slowLogTopology, 1, 7, { traces: true, metrics: true, logs: true }, 1));
+if (!slowEnabledRun.ok || !slowEnabledRun.logs?.some((log) => log.body.includes("slow request GET /slow"))) {
+  throw new Error(`slow threshold did not emit slow logs: ${JSON.stringify(slowEnabledRun)}`);
 }
 
 for (const seed of [1, 42, 777, 2026]) {

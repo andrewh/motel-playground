@@ -52,8 +52,14 @@ const snapshot = createResultSnapshot({
   topology,
   settings: {
     duration: 2.5,
+    slowThresholdMs: 25,
     seed: 314,
     maxNodes: 4,
+    signals: {
+      traces: true,
+      metrics: false,
+      logs: true,
+    },
   },
   result,
   exportedAt: new Date("2026-06-14T20:50:27Z"),
@@ -66,8 +72,14 @@ assert.deepEqual(snapshot, {
   topology,
   settings: {
     duration: "2.5",
+    slowThresholdMs: "25",
     seed: "314",
     maxNodes: "4",
+    signals: {
+      traces: true,
+      metrics: false,
+      logs: true,
+    },
   },
   result,
 });
@@ -89,8 +101,14 @@ const minimalSnapshot = normalizeResultSnapshot({
 
 assert.deepEqual(minimalSnapshot.settings, {
   duration: "1",
+  slowThresholdMs: "0",
   seed: "42",
   maxNodes: "8",
+  signals: {
+    traces: true,
+    metrics: true,
+    logs: true,
+  },
 });
 assert.deepEqual(minimalSnapshot.result.spans, []);
 assert.deepEqual(minimalSnapshot.result.metrics, []);

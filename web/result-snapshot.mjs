@@ -5,6 +5,8 @@ export const resultSnapshotMimeType = "application/json";
 const defaultDurationSetting = "1";
 const defaultMaxNodesSetting = "8";
 const defaultSeedSetting = "42";
+const defaultSignalSetting = true;
+const defaultSlowThresholdSetting = "0";
 const filenameFallbackToken = "run";
 const filenameUnsafePattern = /[^a-z0-9_-]+/gi;
 const requiredStatsFields = ["traces", "spans", "errors", "error_rate"];
@@ -89,14 +91,29 @@ function normalizeSettings(settings = {}) {
   const source = isRecord(settings) ? settings : {};
   return {
     duration: stringSetting(source.duration, defaultDurationSetting),
+    slowThresholdMs: stringSetting(source.slowThresholdMs, defaultSlowThresholdSetting),
     seed: stringSetting(source.seed, defaultSeedSetting),
     maxNodes: stringSetting(source.maxNodes, defaultMaxNodesSetting),
+    signals: normalizeSignals(source.signals),
+  };
+}
+
+function normalizeSignals(signals = {}) {
+  const source = isRecord(signals) ? signals : {};
+  return {
+    traces: boolSetting(source.traces, defaultSignalSetting),
+    metrics: boolSetting(source.metrics, defaultSignalSetting),
+    logs: boolSetting(source.logs, defaultSignalSetting),
   };
 }
 
 function stringSetting(value, fallback) {
   if (value == null || value === "") return fallback;
   return String(value);
+}
+
+function boolSetting(value, fallback) {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function safeFilenameToken(value) {

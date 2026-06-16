@@ -12,6 +12,9 @@ import (
 
 const (
 	floatTolerance       = 0.0001
+	testRunDuration      = 200 * time.Millisecond
+	testRunSeed          = 7
+	testSlowThreshold    = time.Millisecond
 	testOperationLatency = 5 * time.Millisecond
 )
 
@@ -374,6 +377,93 @@ const testOTLPTrace = `{
     }
   ]
 }`
+
+func TestRunSignalSelection(t *testing.T) {
+	run := Run(testSignalTopology, testRunDuration, testRunSeed, RunSignals{
+		Traces:  true,
+		Metrics: false,
+		Logs:    false,
+	})
+	if !run.OK {
+		t.Fatalf("Run() failed: %#v", run.Errors)
+	}
+	if !run.Signals.Traces || run.Signals.Metrics || run.Signals.Logs {
+		t.Fatalf("Run() signals = %#v, want traces only", run.Signals)
+	}
+	if run.Stats == nil || run.Stats.Spans == 0 {
+		t.Fatalf("Run() stats did not count generated spans: %#v", run.Stats)
+	}
+	if len(run.Spans) == 0 {
+		t.Fatalf("Run() did not capture traces")
+	}
+	if len(run.Metrics) != 0 || len(run.Logs) != 0 {
+		t.Fatalf("Run() captured disabled signals: metrics=%d logs=%d", len(run.Metrics), len(run.Logs))
+	}
+
+	metricsOnly := Run(testSignalTopology, testRunDuration, testRunSeed, RunSignals{
+		Traces:  false,
+		Metrics: true,
+		Logs:    false,
+	})
+	if !metricsOnly.OK {
+		t.Fatalf("Run() metrics only failed: %#v", metricsOnly.Errors)
+	}
+	if len(metricsOnly.Spans) != 0 || len(metricsOnly.Metrics) == 0 || len(metricsOnly.Logs) != 0 {
+		t.Fatalf("Run() metrics-only captures = spans:%d metrics:%d logs:%d", len(metricsOnly.Spans), len(metricsOnly.Metrics), len(metricsOnly.Logs))
+	}
+}
+
+func TestRunSlowThreshold(t *testing.T) {
+	withoutThreshold := Run(testSlowLogTopology, testRunDuration, testRunSeed, DefaultRunSignals(), 0)
+	if !withoutThreshold.OK {
+		t.Fatalf("Run() without threshold failed: %#v", withoutThreshold.Errors)
+	}
+	if len(withoutThreshold.Logs) != 0 {
+		t.Fatalf("Run() without threshold emitted slow logs: %#v", withoutThreshold.Logs)
+	}
+
+	withThreshold := Run(testSlowLogTopology, testRunDuration, testRunSeed, DefaultRunSignals(), testSlowThreshold)
+	if !withThreshold.OK {
+		t.Fatalf("Run() with threshold failed: %#v", withThreshold.Errors)
+	}
+	if len(withThreshold.Logs) == 0 {
+		t.Fatalf("Run() with threshold did not emit slow logs")
+	}
+	if got := withThreshold.Logs[0].Body; got != "slow request GET /slow" {
+		t.Fatalf("Run() slow log body = %q, want %q", got, "slow request GET /slow")
+	}
+}
+
+const testSignalTopology = `version: 1
+services:
+  gateway:
+    metrics:
+      - name: gateway.request.duration
+        type: histogram
+        unit: ms
+    logs:
+      - severity: INFO
+        body: "gateway handled {operation.name}"
+    operations:
+      GET /:
+        duration: 5ms +/- 1ms
+traffic:
+  rate: 20/s
+`
+
+const testSlowLogTopology = `version: 1
+services:
+  gateway:
+    operations:
+      GET /slow:
+        duration: 20ms +/- 1ms
+        logs:
+          - severity: WARN
+            body: "slow request {operation.name}"
+            condition: slow
+traffic:
+  rate: 20/s
+`
 
 func newLayeredTopology() *synth.Topology {
 	apiRoot := testOperation("api", "root", 0)
