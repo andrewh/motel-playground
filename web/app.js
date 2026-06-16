@@ -102,7 +102,6 @@ scenarios:
         error_rate: 15%
 `;
 
-const p5ScriptPath = "./vendor/p5/p5.min.js";
 const d3ScriptPath = "./vendor/d3/d3.min.js";
 const plotScriptPath = "./vendor/plot/plot.umd.min.js";
 const firstResultTabIndex = 0;
@@ -136,7 +135,6 @@ const state = {
   runBusy: false,
   activeRunID: 0,
   runner: null,
-  p5Loading: null,
   plotLoading: null,
   metricChartData: null,
   rawOutput: "",
@@ -1998,22 +1996,8 @@ function renderMap(topology, spans) {
 function renderMapContents(topology, spans) {
   if (!topology) return;
   if (!document.querySelector("#view-map").classList.contains("active")) return;
-  if (topology.graph && window.renderP5Map) {
-    if (!window.p5) {
-      els.map.classList.remove("p5-map");
-      els.map.innerHTML = `<p class="empty">Loading service map.</p>`;
-      loadP5().then(() => {
-        if (activeResultView() === "map" && state.currentTopology === topology) {
-          renderMap(topology, spans);
-        }
-      }).catch(() => {
-        if (activeResultView() === "map" && state.currentTopology === topology) {
-          window.renderP5Map(els.map, topology.graph, spans);
-        }
-      });
-      return;
-    }
-    window.renderP5Map(els.map, topology.graph, spans);
+  if (topology.graph && window.renderServiceMap) {
+    window.renderServiceMap(els.map, topology.graph, spans);
     return;
   }
   const counts = new Map();
@@ -2030,16 +2014,6 @@ function renderMapContents(topology, spans) {
       <ol>${opList}</ol>
     </section>`;
   }).join("");
-}
-
-function loadP5() {
-  if (window.p5) return Promise.resolve();
-  if (state.p5Loading) return state.p5Loading;
-  state.p5Loading = loadScript(p5ScriptPath, "Could not load p5");
-  state.p5Loading.catch(() => {
-    state.p5Loading = null;
-  });
-  return state.p5Loading;
 }
 
 // Observable Plot's UMD bundle expects a global d3, so load d3 first.
@@ -2092,11 +2066,11 @@ function clearPreview(message) {
 }
 
 function clearMap(message) {
-  if (window.clearP5Map) {
-    window.clearP5Map(els.map, message);
+  if (window.clearServiceMap) {
+    window.clearServiceMap(els.map, message);
     return;
   }
-  els.map.classList.remove("p5-map");
+  els.map.classList.remove("graph-map");
   els.map.innerHTML = `<p class="empty">${escapeHtml(message)}</p>`;
 }
 

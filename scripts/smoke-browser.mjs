@@ -307,7 +307,7 @@ try {
   await evaluate(client, `document.querySelector("[data-view='map']").click()`);
   const mapState = await waitFor(async () => {
     const state = await evaluate(client, `(${mapRenderState})()`);
-    return state.nonblankCanvas || state.fallbackNodes >= 2 ? state : false;
+    return state.svgNodes >= 2 || state.fallbackNodes >= 2 ? state : false;
   }, "service map rendered");
 
   const maxNodeControl = await evaluate(client, `(() => {
@@ -733,7 +733,7 @@ try {
     return state.cleared ? state : false;
   }, "invalid validation clears stale state");
 
-  console.log(`browser smoke ok: map rendered via ${mapState.nonblankCanvas ? "p5 canvas" : "HTML fallback"}; stale states cleared`);
+  console.log(`browser smoke ok: map rendered via ${mapState.svgNodes ? "SVG" : "HTML fallback"}; stale states cleared`);
 } finally {
   if (client) client.close();
   if (chrome.exitCode === null && chrome.signalCode === null) {
@@ -1244,28 +1244,12 @@ function printReportState() {
 
 function mapRenderState() {
   const map = document.querySelector("#service-map");
-  const canvas = map.querySelector("canvas");
+  const svg = map.querySelector("svg.graph-svg");
   return {
     fallbackNodes: map.querySelectorAll(".service-node").length,
-    nonblankCanvas: canvas ? canvasHasInk(canvas) : false,
+    svgNodes: svg ? svg.querySelectorAll(".graph-node").length : 0,
     text: map.textContent.trim(),
   };
-
-  function canvasHasInk(canvas) {
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    const { data, width, height } = context.getImageData(0, 0, canvas.width, canvas.height);
-    const step = Math.max(1, Math.floor((width * height) / 8000));
-    const base = [data[0], data[1], data[2], data[3]];
-    for (let pixel = step; pixel < width * height; pixel += step) {
-      const index = pixel * 4;
-      const delta = Math.abs(data[index] - base[0])
-        + Math.abs(data[index + 1] - base[1])
-        + Math.abs(data[index + 2] - base[2])
-        + Math.abs(data[index + 3] - base[3]);
-      if (delta > 8) return true;
-    }
-    return false;
-  }
 }
 
 function traceFilterState() {
@@ -1418,7 +1402,7 @@ function invalidValidationState() {
     && validate.classList.contains("invalid")
     && !validate.classList.contains("validated")
     && !preview.querySelector("svg")
-    && !map.querySelector("canvas")
+    && !map.querySelector(".graph-svg")
     && map.textContent.includes("Fix validation errors")
     && !spans.querySelector(".trace-group")
     && spans.textContent.includes("Fix validation errors")
