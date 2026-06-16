@@ -378,6 +378,43 @@ const testOTLPTrace = `{
   ]
 }`
 
+func TestImportTracesStdouttraceMultiTrace(t *testing.T) {
+	result := ImportTraces(testStdouttraceMultiTrace, traceFormatStdout)
+	if !result.OK {
+		t.Fatalf("ImportTraces() failed: %#v", result.Diagnostics)
+	}
+	if result.Stats == nil || result.Stats.Format != traceFormatStdout {
+		t.Fatalf("ImportTraces() stats = %#v, want stdouttrace format", result.Stats)
+	}
+	if result.Stats.Traces != 2 || result.Stats.Spans != 4 {
+		t.Fatalf("ImportTraces() stats = %#v, want 2 traces and 4 spans", result.Stats)
+	}
+	// Two root spans one second apart exercise the multi-trace traffic-rate
+	// path: 2 traces over a 1s window yields a 2/s rate.
+	if !strings.Contains(result.Topology, "2/s") {
+		t.Fatalf("ImportTraces() topology missing inferred 2/s rate:\n%s", result.Topology)
+	}
+	// db.system is constant across every backend span, so it should be
+	// inferred as a resource attribute on that service.
+	if !strings.Contains(result.Topology, "db.system: postgresql") {
+		t.Fatalf("ImportTraces() topology missing inferred constant attribute:\n%s", result.Topology)
+	}
+	// With more than one trace, the single-trace accuracy warning must not fire.
+	for _, diag := range result.Diagnostics {
+		if strings.Contains(diag.Message, "only 1 trace") {
+			t.Fatalf("ImportTraces() emitted single-trace warning for multi-trace input: %#v", result.Diagnostics)
+		}
+	}
+}
+
+// testStdouttraceMultiTrace holds two traces (frontend -> backend) whose root
+// spans start one second apart, with a constant db.system attribute on every
+// backend span.
+const testStdouttraceMultiTrace = `{"Name":"GET /checkout","SpanContext":{"TraceID":"t1","SpanID":"f1"},"Parent":{"TraceID":"t1","SpanID":"0000000000000000"},"StartTime":"2024-01-01T00:00:00Z","EndTime":"2024-01-01T00:00:00.020Z","Attributes":[],"Resource":[{"Key":"service.name","Value":{"Type":"STRING","Value":"frontend"}}],"Status":{"Code":"Unset"},"InstrumentationScope":{"Name":"frontend"}}
+{"Name":"query","SpanContext":{"TraceID":"t1","SpanID":"b1"},"Parent":{"TraceID":"t1","SpanID":"f1"},"StartTime":"2024-01-01T00:00:00.005Z","EndTime":"2024-01-01T00:00:00.015Z","Attributes":[{"Key":"db.system","Value":{"Type":"STRING","Value":"postgresql"}}],"Resource":[{"Key":"service.name","Value":{"Type":"STRING","Value":"backend"}}],"Status":{"Code":"Unset"},"InstrumentationScope":{"Name":"backend"}}
+{"Name":"GET /checkout","SpanContext":{"TraceID":"t2","SpanID":"f2"},"Parent":{"TraceID":"t2","SpanID":"0000000000000000"},"StartTime":"2024-01-01T00:00:01Z","EndTime":"2024-01-01T00:00:01.020Z","Attributes":[],"Resource":[{"Key":"service.name","Value":{"Type":"STRING","Value":"frontend"}}],"Status":{"Code":"Unset"},"InstrumentationScope":{"Name":"frontend"}}
+{"Name":"query","SpanContext":{"TraceID":"t2","SpanID":"b2"},"Parent":{"TraceID":"t2","SpanID":"f2"},"StartTime":"2024-01-01T00:00:01.005Z","EndTime":"2024-01-01T00:00:01.015Z","Attributes":[{"Key":"db.system","Value":{"Type":"STRING","Value":"postgresql"}}],"Resource":[{"Key":"service.name","Value":{"Type":"STRING","Value":"backend"}}],"Status":{"Code":"Unset"},"InstrumentationScope":{"Name":"backend"}}`
+
 func TestRunSignalSelection(t *testing.T) {
 	run := Run(testSignalTopology, testRunDuration, testRunSeed, RunSignals{
 		Traces:  true,
