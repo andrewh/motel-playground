@@ -105,6 +105,9 @@ const reportMapNodeLabelLength = 24;
 const reportMapNodeWidth = 132;
 const reportMapPadding = 48;
 const reportTableRowLimit = 80;
+const bytesPerMiB = 1024 * 1024;
+const traceImportMaxMiB = 5;
+const traceImportMaxBytes = traceImportMaxMiB * bytesPerMiB;
 
 const state = {
   ready: false,
@@ -149,6 +152,11 @@ const els = {
   shortcutHelpButton: document.querySelector("#shortcut-help-button"),
   shortcutHelpClose: document.querySelector("#shortcut-help-close"),
   file: document.querySelector("#topology-file"),
+  traceFile: document.querySelector("#trace-file"),
+  traceInput: document.querySelector("#trace-input"),
+  traceFormat: document.querySelector("#trace-format"),
+  loadTraces: document.querySelector("#load-traces-button"),
+  importTraces: document.querySelector("#import-traces-button"),
   load: document.querySelector("#load-button"),
   save: document.querySelector("#save-button"),
   share: document.querySelector("#share-button"),
@@ -181,6 +189,7 @@ const els = {
   raw: document.querySelector("#raw-output"),
   summary: document.querySelector("#summary-line"),
   shareStatus: document.querySelector("#share-status"),
+  traceImportStatus: document.querySelector("#trace-import-status"),
   report: document.querySelector("#print-report"),
   metrics: {
     traces: document.querySelector("#metric-traces"),
@@ -233,14 +242,21 @@ els.validate.addEventListener("click", () => validate());
 els.run.addEventListener("click", () => run());
 els.generate.addEventListener("click", () => generateTopology());
 els.load.addEventListener("click", () => els.file.click());
+els.loadTraces.addEventListener("click", () => els.traceFile.click());
 els.save.addEventListener("click", () => saveTopology());
 els.share.addEventListener("click", () => {
   void copyShareURL();
+});
+els.importTraces.addEventListener("click", () => {
+  void importTraces();
 });
 els.importResults.addEventListener("click", () => els.resultFile.click());
 els.exportResults.addEventListener("click", () => exportResults());
 els.printReport.addEventListener("click", () => printReport());
 els.file.addEventListener("change", () => loadTopologyFile());
+els.traceFile.addEventListener("change", () => {
+  void loadTraceFile();
+});
 els.resultFile.addEventListener("change", () => {
   void loadResultsFile();
 });
@@ -460,6 +476,7 @@ function initEditors() {
     restoreShareState: () => restoreShareStateFromURL(),
     createResultSnapshot: () => makeCurrentResultSnapshot(),
     importResultSnapshot: (snapshot) => applyResultSnapshot(normalizeResultSnapshot(snapshot)),
+    importTraces: (source, format = "auto") => window.motelImportTraces(source, format),
   };
 }
 
@@ -599,6 +616,28 @@ function setShareStatus(message, kind) {
   if (kind) {
     els.shareStatus.classList.add(kind);
   }
+}
+
+function setTraceImportStatus(message, kind) {
+  els.traceImportStatus.textContent = message;
+  els.traceImportStatus.classList.remove("good", "bad");
+  if (kind) {
+    els.traceImportStatus.classList.add(kind);
+  }
+}
+
+function firstDiagnosticMessage(result) {
+  return result?.diagnostics?.[0]?.message || "unknown error";
+}
+
+function traceImportSummary(result) {
+  const traces = result?.stats?.traces ?? 0;
+  const spans = result?.stats?.spans ?? 0;
+  return `Imported ${traces} traces, ${spans} spans`;
+}
+
+function traceInputBytes(value) {
+  return new TextEncoder().encode(value).byteLength;
 }
 
 function openShortcutHelp() {
@@ -777,6 +816,23 @@ async function loadTopologyFile() {
   }
 }
 
+async function loadTraceFile() {
+  const [file] = els.traceFile.files ?? [];
+  if (!file) return;
+  try {
+    if (file.size > traceImportMaxBytes) {
+      setTraceImportStatus(`Trace file exceeds ${traceImportMaxMiB} MB.`, "bad");
+      return;
+    }
+    els.traceInput.value = await file.text();
+    setTraceImportStatus(`Loaded ${file.name}`, "good");
+  } catch (error) {
+    setTraceImportStatus(`Could not load traces: ${error.message}`, "bad");
+  } finally {
+    els.traceFile.value = "";
+  }
+}
+
 function saveTopology() {
   const filename = topologyFilename();
   downloadText(getTopologyValue(), { filename, type: "text/yaml" });
@@ -825,6 +881,43 @@ async function loadResultsFile() {
     setShareStatus(`Could not import results: ${error.message}`, "bad");
   } finally {
     els.resultFile.value = "";
+  }
+}
+
+async function importTraces() {
+  if (!state.ready || state.runtimeBusy) return;
+  const source = els.traceInput.value.trim();
+  if (!source) {
+    setTraceImportStatus("Trace input is empty.", "bad");
+    return;
+  }
+  if (traceInputBytes(source) > traceImportMaxBytes) {
+    setTraceImportStatus(`Trace input exceeds ${traceImportMaxMiB} MB.`, "bad");
+    return;
+  }
+
+  setRuntimeBusy(true, "Importing traces");
+  try {
+    const result = JSON.parse(await window.motelImportTraces(source, els.traceFormat.value));
+    renderRawJson(result);
+    if (!result.ok) {
+      setTraceImportStatus(`Import failed: ${firstDiagnosticMessage(result)}`, "bad");
+      return;
+    }
+
+    setTopologyValue(result.topology);
+    clearRunOutput(emptyCopy.spans);
+    clearSignalOutput();
+    clearMap(emptyCopy.map);
+    els.summary.classList.add("good");
+    els.summary.classList.remove("bad");
+    els.summary.textContent = "Imported topology from traces";
+    setTraceImportStatus(traceImportSummary(result), "good");
+    if (state.ready) await validate({ passive: true });
+  } catch (error) {
+    setTraceImportStatus(`Import failed: ${error.message}`, "bad");
+  } finally {
+    setRuntimeBusy(false);
   }
 }
 
@@ -1796,6 +1889,8 @@ function syncControls(label) {
   els.load.disabled = state.runtimeBusy;
   els.save.disabled = state.runtimeBusy;
   els.generate.disabled = state.runtimeBusy;
+  els.loadTraces.disabled = state.runtimeBusy || !state.ready;
+  els.importTraces.disabled = state.runtimeBusy || !state.ready;
   els.importResults.disabled = state.runtimeBusy || !state.ready;
   els.exportResults.disabled = state.runtimeBusy || !state.lastRun;
   els.printReport.disabled = state.runtimeBusy || !state.lastRun;

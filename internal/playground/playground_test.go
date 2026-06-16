@@ -2,6 +2,7 @@ package playground
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -291,6 +292,128 @@ func TestShorten(t *testing.T) {
 		})
 	}
 }
+
+func TestImportTracesOTLP(t *testing.T) {
+	result := ImportTraces(testOTLPTrace, traceFormatOTLP)
+	if !result.OK {
+		t.Fatalf("ImportTraces() failed: %#v", result.Diagnostics)
+	}
+	if result.Stats == nil {
+		t.Fatalf("ImportTraces() stats are nil")
+	}
+	if result.Stats.Traces != 1 || result.Stats.Spans != 2 {
+		t.Fatalf("ImportTraces() stats = %#v, want 1 trace and 2 spans", result.Stats)
+	}
+	if !strings.Contains(result.Topology, "api-gateway:") {
+		t.Fatalf("ImportTraces() topology missing api-gateway:\n%s", result.Topology)
+	}
+	if !strings.Contains(result.Topology, "user-service.list") {
+		t.Fatalf("ImportTraces() topology missing inferred call:\n%s", result.Topology)
+	}
+	if len(result.Diagnostics) < 2 || result.Diagnostics[1].Severity != "warning" {
+		t.Fatalf("ImportTraces() diagnostics missing single-trace warning: %#v", result.Diagnostics)
+	}
+}
+
+func TestImportTracesRejectsUnknownFormat(t *testing.T) {
+	result := ImportTraces(testOTLPTrace, "zipkin")
+	if result.OK {
+		t.Fatalf("ImportTraces() with unknown format succeeded")
+	}
+	if len(result.Diagnostics) != 1 || !strings.Contains(result.Diagnostics[0].Message, "unknown trace format") {
+		t.Fatalf("ImportTraces() diagnostics = %#v, want unknown format error", result.Diagnostics)
+	}
+}
+
+const testOTLPTrace = `{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "api-gateway"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {"name": "api-gateway"},
+          "spans": [
+            {
+              "traceId": "AQIDBAUGBwgJCgsMDQ4PEA==",
+              "spanId": "AQIDBAUGBwg=",
+              "parentSpanId": "",
+              "name": "GET /users",
+              "startTimeUnixNano": "1700000000000000000",
+              "endTimeUnixNano": "1700000000030000000",
+              "status": {},
+              "attributes": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "user-service"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {"name": "user-service"},
+          "spans": [
+            {
+              "traceId": "AQIDBAUGBwgJCgsMDQ4PEA==",
+              "spanId": "CQoLDA0ODxA=",
+              "parentSpanId": "AQIDBAUGBwg=",
+              "name": "list",
+              "startTimeUnixNano": "1700000000005000000",
+              "endTimeUnixNano": "1700000000020000000",
+              "status": {},
+              "attributes": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}`
+
+func TestImportTracesStdouttraceMultiTrace(t *testing.T) {
+	result := ImportTraces(testStdouttraceMultiTrace, traceFormatStdout)
+	if !result.OK {
+		t.Fatalf("ImportTraces() failed: %#v", result.Diagnostics)
+	}
+	if result.Stats == nil || result.Stats.Format != traceFormatStdout {
+		t.Fatalf("ImportTraces() stats = %#v, want stdouttrace format", result.Stats)
+	}
+	if result.Stats.Traces != 2 || result.Stats.Spans != 4 {
+		t.Fatalf("ImportTraces() stats = %#v, want 2 traces and 4 spans", result.Stats)
+	}
+	// Two root spans one second apart exercise the multi-trace traffic-rate
+	// path: 2 traces over a 1s window yields a 2/s rate.
+	if !strings.Contains(result.Topology, "2/s") {
+		t.Fatalf("ImportTraces() topology missing inferred 2/s rate:\n%s", result.Topology)
+	}
+	// db.system is constant across every backend span, so it should be
+	// inferred as a resource attribute on that service.
+	if !strings.Contains(result.Topology, "db.system: postgresql") {
+		t.Fatalf("ImportTraces() topology missing inferred constant attribute:\n%s", result.Topology)
+	}
+	// With more than one trace, the single-trace accuracy warning must not fire.
+	for _, diag := range result.Diagnostics {
+		if strings.Contains(diag.Message, "only 1 trace") {
+			t.Fatalf("ImportTraces() emitted single-trace warning for multi-trace input: %#v", result.Diagnostics)
+		}
+	}
+}
+
+// testStdouttraceMultiTrace holds two traces (frontend -> backend) whose root
+// spans start one second apart, with a constant db.system attribute on every
+// backend span.
+const testStdouttraceMultiTrace = `{"Name":"GET /checkout","SpanContext":{"TraceID":"t1","SpanID":"f1"},"Parent":{"TraceID":"t1","SpanID":"0000000000000000"},"StartTime":"2024-01-01T00:00:00Z","EndTime":"2024-01-01T00:00:00.020Z","Attributes":[],"Resource":[{"Key":"service.name","Value":{"Type":"STRING","Value":"frontend"}}],"Status":{"Code":"Unset"},"InstrumentationScope":{"Name":"frontend"}}
+{"Name":"query","SpanContext":{"TraceID":"t1","SpanID":"b1"},"Parent":{"TraceID":"t1","SpanID":"f1"},"StartTime":"2024-01-01T00:00:00.005Z","EndTime":"2024-01-01T00:00:00.015Z","Attributes":[{"Key":"db.system","Value":{"Type":"STRING","Value":"postgresql"}}],"Resource":[{"Key":"service.name","Value":{"Type":"STRING","Value":"backend"}}],"Status":{"Code":"Unset"},"InstrumentationScope":{"Name":"backend"}}
+{"Name":"GET /checkout","SpanContext":{"TraceID":"t2","SpanID":"f2"},"Parent":{"TraceID":"t2","SpanID":"0000000000000000"},"StartTime":"2024-01-01T00:00:01Z","EndTime":"2024-01-01T00:00:01.020Z","Attributes":[],"Resource":[{"Key":"service.name","Value":{"Type":"STRING","Value":"frontend"}}],"Status":{"Code":"Unset"},"InstrumentationScope":{"Name":"frontend"}}
+{"Name":"query","SpanContext":{"TraceID":"t2","SpanID":"b2"},"Parent":{"TraceID":"t2","SpanID":"f2"},"StartTime":"2024-01-01T00:00:01.005Z","EndTime":"2024-01-01T00:00:01.015Z","Attributes":[{"Key":"db.system","Value":{"Type":"STRING","Value":"postgresql"}}],"Resource":[{"Key":"service.name","Value":{"Type":"STRING","Value":"backend"}}],"Status":{"Code":"Unset"},"InstrumentationScope":{"Name":"backend"}}`
 
 func TestRunSignalSelection(t *testing.T) {
 	run := Run(testSignalTopology, testRunDuration, testRunSeed, RunSignals{

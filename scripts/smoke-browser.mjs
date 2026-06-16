@@ -18,6 +18,7 @@ const minReportPDFBase64Length = 6000;
 const oversizedTopologyPaddingLength = 9000;
 const invalidTopology = "version: 1\nservices: [\n";
 const oversizedTopology = `version: 1\n# ${"x".repeat(oversizedTopologyPaddingLength)}\nservices: {}\n`;
+const traceFixture = await readFile(new URL("./testdata/single-trace-otlp.json", import.meta.url), "utf8");
 const erroredTopology = `version: 1
 services:
   gateway:
@@ -308,6 +309,57 @@ try {
   ) {
     throw new Error(`duration control does not default to one-second fractional input: ${JSON.stringify(durationControl)}`);
   }
+  const traceImportDefaults = await evaluate(client, `(() => {
+    const input = document.querySelector("#trace-input");
+    const format = document.querySelector("#trace-format");
+    const label = input.closest("label")?.textContent.trim();
+    return {
+      format: format.value,
+      options: Array.from(format.options).map((option) => option.value),
+      placeholder: input.placeholder,
+      label,
+      loadDisabled: document.querySelector("#load-traces-button").disabled,
+      importDisabled: document.querySelector("#import-traces-button").disabled,
+    };
+  })()`);
+  if (
+    traceImportDefaults.format !== "auto"
+    || traceImportDefaults.options.join(",") !== "auto,otlp,stdouttrace"
+    || !traceImportDefaults.placeholder.includes("OTLP JSON")
+    || !traceImportDefaults.label.includes("max 5 MB")
+    || traceImportDefaults.loadDisabled
+    || traceImportDefaults.importDisabled
+  ) {
+    throw new Error(`trace import controls have unexpected defaults: ${JSON.stringify(traceImportDefaults)}`);
+  }
+  await importTraceFile(client, traceFixture);
+  const loadedTrace = await waitFor(async () => {
+    const state = await evaluate(client, `(${traceImportLoadState})()`);
+    return state.loaded ? state : false;
+  }, "trace file loaded into import panel");
+  if (!loadedTrace.inputIncludesOTLP) {
+    throw new Error(`trace file did not populate the trace input: ${JSON.stringify(loadedTrace)}`);
+  }
+  await evaluate(client, `document.querySelector("#trace-format").value = "otlp"`);
+  await evaluate(client, `document.querySelector("#import-traces-button").click()`);
+  const importedTraceTopology = await waitFor(async () => {
+    const state = await evaluate(client, `(${traceImportState})()`);
+    return state.ready ? state : false;
+  }, "trace topology imported");
+  if (
+    !importedTraceTopology.topology.includes("api-gateway:")
+    || !importedTraceTopology.topology.includes("user-service.list")
+    || !importedTraceTopology.preview
+    || importedTraceTopology.exportEnabled
+    || importedTraceTopology.spans !== "0"
+  ) {
+    throw new Error(`trace import did not load inferred topology cleanly: ${JSON.stringify(importedTraceTopology)}`);
+  }
+  await setEditorValue(client, sampleTopology);
+  await evaluate(client, `document.querySelector("#trace-input").value = ""`);
+  await evaluate(client, `document.querySelector("#validate-button").click()`);
+  await waitFor(async () => evaluate(client, `document.querySelector("#validate-button").classList.contains("validated")`), "sample revalidated after trace import");
+
   const slowThresholdControl = await evaluate(client, `(() => {
     const input = document.querySelector("#slow-threshold");
     const field = input.closest(".slow-threshold-field");
@@ -835,6 +887,19 @@ async function importResultFile(client, text) {
   `);
 }
 
+async function importTraceFile(client, text) {
+  await evaluate(client, `
+    (() => {
+      const input = document.querySelector("#trace-file");
+      const file = new File([${JSON.stringify(text)}], "trace.json", { type: "application/json" });
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    })()
+  `);
+}
+
 async function dispatchShortcut(client, { key, ctrlKey = false, metaKey = false, shiftKey = false, altKey = false, selector = "document" }) {
   await evaluate(client, `
     (() => {
@@ -988,29 +1053,29 @@ function shareRestoreState() {
   return {
     ready: document.querySelector("#runtime-status")?.textContent === "Runtime ready",
     preview: Boolean(document.querySelector("#preview svg")),
-	    topology: window.motelPlayground?.getTopology(),
-	    duration: document.querySelector("#duration").value,
-	    slowThreshold: document.querySelector("#slow-threshold").value,
-	    seed: document.querySelector("#seed").value,
-    maxNodes: document.querySelector("#max-nodes").value,
+    topology: window.motelPlayground?.getTopology(),
+    duration: document.querySelector("#duration")?.value ?? "",
+    slowThreshold: document.querySelector("#slow-threshold")?.value ?? "",
+    seed: document.querySelector("#seed")?.value ?? "",
+    maxNodes: document.querySelector("#max-nodes")?.value ?? "",
     signals: {
       traces: checked("#run-signal-traces"),
       metrics: checked("#run-signal-metrics"),
       logs: checked("#run-signal-logs"),
     },
-    filter: document.querySelector("#result-filter").value,
+    filter: document.querySelector("#result-filter")?.value ?? "",
     activeView: document.querySelector(".tab.active")?.dataset.view,
     path: window.location.pathname,
-    status: document.querySelector("#share-status").textContent,
+    status: document.querySelector("#share-status")?.textContent ?? "",
   };
 }
 
 function invalidShareState() {
   return {
     ready: document.querySelector("#runtime-status")?.textContent === "Runtime ready",
-    recoverable: document.querySelector("#share-status").textContent.includes("could not be opened"),
-    defaultTopology: window.motelPlayground?.getTopology().includes("Five-service topology"),
-    runDisabled: document.querySelector("#run-button").disabled,
+    recoverable: (document.querySelector("#share-status")?.textContent ?? "").includes("could not be opened"),
+    defaultTopology: (window.motelPlayground?.getTopology() ?? "").includes("Five-service topology"),
+    runDisabled: Boolean(document.querySelector("#run-button")?.disabled),
   };
 }
 
@@ -1019,6 +1084,31 @@ function oversizedShareState() {
   return {
     status,
     tooLarge: status.includes("too large"),
+  };
+}
+
+function traceImportLoadState() {
+  const status = document.querySelector("#trace-import-status")?.textContent ?? "";
+  const input = document.querySelector("#trace-input")?.value ?? "";
+  return {
+    status,
+    loaded: status.includes("Loaded trace.json"),
+    inputIncludesOTLP: input.includes("resourceSpans"),
+  };
+}
+
+function traceImportState() {
+  const status = document.querySelector("#trace-import-status")?.textContent ?? "";
+  return {
+    ready: document.querySelector("#runtime-status")?.textContent === "Runtime ready"
+      && status.includes("Imported 1 traces, 2 spans")
+      && Boolean(document.querySelector("#preview svg")),
+    status,
+    topology: window.motelPlayground?.getTopology() || "",
+    summary: document.querySelector("#summary-line")?.textContent ?? "",
+    preview: Boolean(document.querySelector("#preview svg")),
+    spans: document.querySelector("#metric-spans")?.textContent ?? "",
+    exportEnabled: !document.querySelector("#export-results-button")?.disabled,
   };
 }
 

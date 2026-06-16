@@ -16,6 +16,9 @@ func main() {
 	js.Global().Set("motelValidate", async(func(args []js.Value) (string, error) {
 		return playground.ToJSON(playground.Validate(args[0].String())), nil
 	}))
+	js.Global().Set("motelImportTraces", async(func(args []js.Value) (string, error) {
+		return playground.ToJSON(playground.ImportTraces(args[0].String(), stringArg(args, 1, "auto"))), nil
+	}))
 	js.Global().Set("motelRun", async(func(args []js.Value) (string, error) {
 		duration := secondsArg(args, 1, 1)
 		seed := uint64(numberArg(args, 2, 1))
@@ -106,6 +109,17 @@ func floatArg(args []js.Value, index int, fallback float64) float64 {
 		if err == nil && !math.IsNaN(parsed) && !math.IsInf(parsed, 0) {
 			return parsed
 		}
+	}
+	return fallback
+}
+
+func stringArg(args []js.Value, index int, fallback string) string {
+	if len(args) <= index {
+		return fallback
+	}
+	value := args[index]
+	if value.Type() == js.TypeString {
+		return value.String()
 	}
 	return fallback
 }

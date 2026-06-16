@@ -1,6 +1,7 @@
 package playground
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/andrewh/motel/pkg/synth"
+	"github.com/andrewh/motel/pkg/synth/traceimport"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/metric"
@@ -34,6 +36,9 @@ const (
 	maxCapturedMetrics  = 500
 	maxCapturedLogs     = 500
 	defaultPreviewRange = 5 * time.Minute
+	traceFormatAuto     = "auto"
+	traceFormatOTLP     = "otlp"
+	traceFormatStdout   = "stdouttrace"
 )
 
 type Diagnostic struct {
@@ -46,6 +51,19 @@ type ValidationResult struct {
 	Diagnostics []Diagnostic        `json:"diagnostics"`
 	Topology    *TopologySummary    `json:"topology,omitempty"`
 	Checks      []synth.CheckResult `json:"checks,omitempty"`
+}
+
+type TraceImportResult struct {
+	OK          bool              `json:"ok"`
+	Topology    string            `json:"topology,omitempty"`
+	Diagnostics []Diagnostic      `json:"diagnostics"`
+	Stats       *TraceImportStats `json:"stats,omitempty"`
+}
+
+type TraceImportStats struct {
+	Format string `json:"format"`
+	Traces int    `json:"traces"`
+	Spans  int    `json:"spans"`
 }
 
 type TopologySummary struct {
@@ -371,6 +389,44 @@ func Validate(source string) ValidationResult {
 	}
 }
 
+func ImportTraces(source string, format string) TraceImportResult {
+	traceFormat, ok := parseTraceImportFormat(format)
+	if !ok {
+		return traceImportError(fmt.Errorf("unknown trace format %q", format))
+	}
+
+	var warnings bytes.Buffer
+	result, err := traceimport.Import(strings.NewReader(source), traceimport.Options{
+		Format:   traceFormat,
+		Warnings: &warnings,
+	})
+	if err != nil {
+		return traceImportError(err)
+	}
+
+	diagnostics := []Diagnostic{{
+		Severity: "success",
+		Message:  fmt.Sprintf("Imported %d traces and %d spans.", result.TraceCount, result.SpanCount),
+	}}
+	for _, warning := range traceImportWarnings(warnings.String()) {
+		diagnostics = append(diagnostics, Diagnostic{
+			Severity: "warning",
+			Message:  warning,
+		})
+	}
+
+	return TraceImportResult{
+		OK:          true,
+		Topology:    string(result.YAML),
+		Diagnostics: diagnostics,
+		Stats: &TraceImportStats{
+			Format: string(traceFormat),
+			Traces: result.TraceCount,
+			Spans:  result.SpanCount,
+		},
+	}
+}
+
 func Run(source string, duration time.Duration, seed uint64, signals RunSignals, slowThresholds ...time.Duration) RunResult {
 	if duration <= 0 {
 		duration = defaultDuration
@@ -506,6 +562,40 @@ func Run(source string, duration time.Duration, seed uint64, signals RunSignals,
 		Signals:  signals,
 		Limits:   limits(duration, len(spans), len(metrics), len(logs)),
 	}
+}
+
+func parseTraceImportFormat(value string) (traceimport.Format, bool) {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "", traceFormatAuto:
+		return traceimport.FormatAuto, true
+	case traceFormatOTLP:
+		return traceimport.FormatOTLP, true
+	case traceFormatStdout:
+		return traceimport.FormatStdouttrace, true
+	default:
+		return "", false
+	}
+}
+
+func traceImportError(err error) TraceImportResult {
+	return TraceImportResult{
+		OK: false,
+		Diagnostics: []Diagnostic{{
+			Severity: "error",
+			Message:  err.Error(),
+		}},
+	}
+}
+
+func traceImportWarnings(output string) []string {
+	var warnings []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			warnings = append(warnings, line)
+		}
+	}
+	return warnings
 }
 
 func Preview(source string, duration time.Duration) (string, error) {
