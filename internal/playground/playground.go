@@ -396,42 +396,17 @@ func ImportTraces(source string, format string) TraceImportResult {
 	}
 
 	var warnings bytes.Buffer
-	spans, err := traceimport.ParseSpans(strings.NewReader(source), traceFormat)
+	result, err := traceimport.Import(strings.NewReader(source), traceimport.Options{
+		Format:   traceFormat,
+		Warnings: &warnings,
+	})
 	if err != nil {
 		return traceImportError(err)
-	}
-
-	trees := traceimport.BuildTrees(spans, &warnings)
-	traceCount := len(trees)
-	if traceCount == 1 {
-		_, _ = fmt.Fprintln(&warnings, "warning: only 1 trace available; duration distributions will be exact values. Use more traces for statistical accuracy.")
-	}
-
-	collector := traceimport.NewStatsCollector()
-	collector.CollectFromTrees(trees)
-
-	yamlBytes, err := traceimport.MarshalConfig(
-		collector,
-		importServiceAttributes(spans),
-		traceCount,
-		len(spans),
-		importWindowSeconds(trees),
-	)
-	if err != nil {
-		return traceImportError(err)
-	}
-
-	cfg, err := synth.ParseConfig(yamlBytes)
-	if err != nil {
-		return traceImportError(fmt.Errorf("validating inferred topology: %w", err))
-	}
-	if err := synth.ValidateConfig(cfg); err != nil {
-		return traceImportError(fmt.Errorf("validating inferred topology: %w", err))
 	}
 
 	diagnostics := []Diagnostic{{
 		Severity: "success",
-		Message:  fmt.Sprintf("Imported %d traces and %d spans.", traceCount, len(spans)),
+		Message:  fmt.Sprintf("Imported %d traces and %d spans.", result.TraceCount, result.SpanCount),
 	}}
 	for _, warning := range traceImportWarnings(warnings.String()) {
 		diagnostics = append(diagnostics, Diagnostic{
@@ -442,12 +417,12 @@ func ImportTraces(source string, format string) TraceImportResult {
 
 	return TraceImportResult{
 		OK:          true,
-		Topology:    string(yamlBytes),
+		Topology:    string(result.YAML),
 		Diagnostics: diagnostics,
 		Stats: &TraceImportStats{
 			Format: string(traceFormat),
-			Traces: traceCount,
-			Spans:  len(spans),
+			Traces: result.TraceCount,
+			Spans:  result.SpanCount,
 		},
 	}
 }
@@ -610,66 +585,6 @@ func traceImportError(err error) TraceImportResult {
 			Message:  err.Error(),
 		}},
 	}
-}
-
-func importServiceAttributes(spans []traceimport.Span) map[string]map[string]string {
-	type attrAccum struct {
-		value    string
-		count    int
-		constant bool
-	}
-
-	serviceAttrs := make(map[string]map[string]*attrAccum)
-	serviceCounts := make(map[string]int)
-	for _, span := range spans {
-		serviceCounts[span.Service]++
-		attrs, ok := serviceAttrs[span.Service]
-		if !ok {
-			attrs = make(map[string]*attrAccum)
-			serviceAttrs[span.Service] = attrs
-		}
-		for key, value := range span.Attributes {
-			attr, ok := attrs[key]
-			if !ok {
-				attrs[key] = &attrAccum{value: value, count: 1, constant: true}
-				continue
-			}
-			attr.count++
-			if attr.value != value {
-				attr.constant = false
-			}
-		}
-	}
-
-	result := make(map[string]map[string]string)
-	for serviceName, attrs := range serviceAttrs {
-		values := make(map[string]string)
-		for key, attr := range attrs {
-			if attr.constant && attr.count == serviceCounts[serviceName] {
-				values[key] = attr.value
-			}
-		}
-		if len(values) > 0 {
-			result[serviceName] = values
-		}
-	}
-	return result
-}
-
-func importWindowSeconds(trees []*traceimport.TraceTree) float64 {
-	rootTimes := make([]time.Time, 0, len(trees))
-	for _, tree := range trees {
-		for _, root := range tree.Roots {
-			rootTimes = append(rootTimes, root.Span.StartTime)
-		}
-	}
-	if len(rootTimes) < 2 {
-		return 0
-	}
-	sort.Slice(rootTimes, func(i, j int) bool {
-		return rootTimes[i].Before(rootTimes[j])
-	})
-	return rootTimes[len(rootTimes)-1].Sub(rootTimes[0]).Seconds()
 }
 
 func traceImportWarnings(output string) []string {
