@@ -21,6 +21,7 @@
             <a href="https://github.com/andrewh/motel" target="_blank" rel="noopener noreferrer">motel code</a>
             <a href="https://github.com/andrewh/motel-playground" target="_blank" rel="noopener noreferrer">playground code</a>
             <a href="https://andrewh.github.io/motel" target="_blank" rel="noopener noreferrer">motel docs</a>
+            <a id="privacy-link" href="#privacy" aria-haspopup="dialog" aria-controls="privacy-statement">privacy</a>
           </nav>
           <button id="theme-toggle" class="icon-button" type="button" aria-pressed="false" aria-label="Switch to dark theme">
             <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true">
@@ -189,6 +190,32 @@
     </main>
     <section id="print-report" class="print-report" aria-label="Printable topology report"></section>
 
+    <div id="privacy-statement" class="modal-backdrop" hidden>
+      <section
+        class="shortcut-modal privacy-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="privacy-title"
+        aria-describedby="privacy-summary"
+        tabindex="-1"
+      >
+        <header class="shortcut-modal-head">
+          <div>
+            <h2 id="privacy-title">Privacy</h2>
+            <p id="privacy-summary">Telemetry is limited to aggregate usage, timing, and coarse browser-side failure data.</p>
+          </div>
+          <button id="privacy-close" class="icon-button" type="button" aria-label="Close privacy statement">
+            <span aria-hidden="true">x</span>
+          </button>
+        </header>
+        <div class="privacy-copy">
+          <p>The hosted playground may use Google Analytics and configured OpenTelemetry export to understand product usage, startup and run timing, rendering latency, and broad error categories.</p>
+          <p>Telemetry does not send topology YAML, raw JSON output, imported trace payloads, generated results, filenames, share links, URL hashes, or other user-authored content.</p>
+          <p>Local development and unconfigured deployments no-op. Event parameters are limited to aggregate counts, settings, size buckets, tab names, durations, and coarse categories.</p>
+        </div>
+      </section>
+    </div>
+
     <div id="shortcut-help" class="modal-backdrop" hidden>
       <section
         class="shortcut-modal"
@@ -229,6 +256,11 @@
     <script src="./vendor/codemirror/indent-fold.min.js"></script>
     <script src="./wasm_exec.js"></script>
     <script src="./graph.js"></script>
+    <script>
+      window.motelTelemetryConfig = {
+        measurementID: "G-B2GVLBQD3G",
+      };
+    </script>
     <script src="./app.js" type="module"></script>
   </body>
 </html>

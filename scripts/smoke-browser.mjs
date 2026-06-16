@@ -237,6 +237,38 @@ try {
   if (!closedHelp.focusedHelpButton) {
     throw new Error(`shortcut help did not restore focus: ${JSON.stringify(closedHelp)}`);
   }
+  const privacyLinkVisible = await evaluate(client, `(() => {
+    const link = document.querySelector("#privacy-link");
+    const box = link?.getBoundingClientRect();
+    return Boolean(link)
+      && link.textContent.trim() === "privacy"
+      && box.width > 0
+      && box.height > 0;
+  })()`);
+  if (!privacyLinkVisible) {
+    throw new Error("privacy link is not visible in the top navigation");
+  }
+  await evaluate(client, `document.querySelector("#privacy-link").click()`);
+  const openPrivacy = await waitFor(async () => {
+    const state = await evaluate(client, `(${privacyStatementState})()`);
+    return state.open && state.focusedDialog && state.text.includes("Telemetry does not send topology YAML") ? state : false;
+  }, "privacy statement opened");
+  if (
+    !openPrivacy.text.includes("raw JSON output")
+    || !openPrivacy.text.includes("imported trace payloads")
+    || !openPrivacy.text.includes("URL hashes")
+    || !openPrivacy.text.includes("Local development")
+  ) {
+    throw new Error(`privacy statement does not cover telemetry boundaries: ${JSON.stringify(openPrivacy)}`);
+  }
+  await dispatchShortcut(client, { key: "Escape" });
+  const closedPrivacy = await waitFor(async () => {
+    const state = await evaluate(client, `(${privacyStatementState})()`);
+    return !state.open && state.focusedPrivacyLink ? state : false;
+  }, "privacy statement closed");
+  if (!closedPrivacy.focusedPrivacyLink) {
+    throw new Error(`privacy statement did not restore focus: ${JSON.stringify(closedPrivacy)}`);
+  }
   await evaluate(client, `window.motelPlayground.setTopology(window.motelPlayground.getTopology())`);
   await evaluate(client, `document.querySelector(".editor-pane .CodeMirror").CodeMirror.focus()`);
   await dispatchShortcut(client, { key: "?", selector: ".editor-pane .CodeMirror textarea" });
@@ -1031,9 +1063,19 @@ function shortcutHelpState() {
   const help = document.querySelector("#shortcut-help");
   return {
     open: !help.hidden,
-    focusedDialog: document.activeElement === document.querySelector(".shortcut-modal"),
+    focusedDialog: document.activeElement === document.querySelector("#shortcut-help .shortcut-modal"),
     focusedHelpButton: document.activeElement === document.querySelector("#shortcut-help-button"),
     text: help.textContent,
+  };
+}
+
+function privacyStatementState() {
+  const statement = document.querySelector("#privacy-statement");
+  return {
+    open: !statement.hidden,
+    focusedDialog: document.activeElement === document.querySelector(".privacy-modal"),
+    focusedPrivacyLink: document.activeElement === document.querySelector("#privacy-link"),
+    text: statement.textContent,
   };
 }
 
