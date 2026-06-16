@@ -18,7 +18,7 @@ const minReportPDFBase64Length = 6000;
 const oversizedTopologyPaddingLength = 9000;
 const invalidTopology = "version: 1\nservices: [\n";
 const oversizedTopology = `version: 1\n# ${"x".repeat(oversizedTopologyPaddingLength)}\nservices: {}\n`;
-const traceFixture = await readFile(new URL("../third_party/motel/pkg/synth/traceimport/testdata/single-trace-otlp.json", import.meta.url), "utf8");
+const traceFixture = await readFile(new URL("./testdata/single-trace-otlp.json", import.meta.url), "utf8");
 const erroredTopology = `version: 1
 services:
   gateway:

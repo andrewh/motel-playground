@@ -9,7 +9,7 @@ const go = new Go();
 const wasm = await readFile(new URL("../web/motel.wasm", import.meta.url));
 const { instance } = await WebAssembly.instantiate(wasm, go.importObject);
 go.run(instance);
-const traceFixture = await readFile(new URL("../third_party/motel/pkg/synth/traceimport/testdata/single-trace-otlp.json", import.meta.url), "utf8");
+const traceFixture = await readFile(new URL("./testdata/single-trace-otlp.json", import.meta.url), "utf8");
 
 const topology = `version: 1
 services:
