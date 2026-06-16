@@ -315,6 +315,82 @@ func TestImportTracesOTLP(t *testing.T) {
 	}
 }
 
+func TestImportTracesGrafanaTempoExport(t *testing.T) {
+	// Grafana's trace viewer "Export → JSON" wraps spans in a top-level
+	// "batches" array and uses the legacy "instrumentationLibrarySpans"/
+	// "instrumentationLibrary" field names. Auto-detection must normalise this
+	// to the standard OTLP shape rather than rejecting it as an unknown format.
+	result := ImportTraces(testGrafanaTempoTrace, traceFormatAuto)
+	if !result.OK {
+		t.Fatalf("ImportTraces() failed: %#v", result.Diagnostics)
+	}
+	if result.Stats == nil || result.Stats.Traces != 1 || result.Stats.Spans != 2 {
+		t.Fatalf("ImportTraces() stats = %#v, want 1 trace and 2 spans", result.Stats)
+	}
+	if !strings.Contains(result.Topology, "api-gateway:") {
+		t.Fatalf("ImportTraces() topology missing api-gateway:\n%s", result.Topology)
+	}
+	if !strings.Contains(result.Topology, "user-service.list") {
+		t.Fatalf("ImportTraces() topology missing inferred call:\n%s", result.Topology)
+	}
+}
+
+// testGrafanaTempoTrace is testOTLPTrace as serialised by Grafana's trace
+// viewer: spans live under "batches" with the legacy instrumentation-library
+// field names instead of "resourceSpans"/"scopeSpans"/"scope".
+const testGrafanaTempoTrace = `{
+  "batches": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "api-gateway"}}
+        ]
+      },
+      "instrumentationLibrarySpans": [
+        {
+          "instrumentationLibrary": {"name": "api-gateway"},
+          "spans": [
+            {
+              "traceId": "AQIDBAUGBwgJCgsMDQ4PEA==",
+              "spanId": "AQIDBAUGBwg=",
+              "parentSpanId": "",
+              "name": "GET /users",
+              "startTimeUnixNano": "1700000000000000000",
+              "endTimeUnixNano": "1700000000030000000",
+              "status": {},
+              "attributes": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "user-service"}}
+        ]
+      },
+      "instrumentationLibrarySpans": [
+        {
+          "instrumentationLibrary": {"name": "user-service"},
+          "spans": [
+            {
+              "traceId": "AQIDBAUGBwgJCgsMDQ4PEA==",
+              "spanId": "CQoLDA0ODxA=",
+              "parentSpanId": "AQIDBAUGBwg=",
+              "name": "list",
+              "startTimeUnixNano": "1700000000005000000",
+              "endTimeUnixNano": "1700000000020000000",
+              "status": {},
+              "attributes": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}`
+
 func TestImportTracesRejectsUnknownFormat(t *testing.T) {
 	result := ImportTraces(testOTLPTrace, "zipkin")
 	if result.OK {
