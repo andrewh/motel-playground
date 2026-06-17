@@ -547,10 +547,47 @@ button.invalid {
 
 .trace-import-panel {
   display: grid;
+  position: relative;
   gap: var(--space-3);
   border-bottom: 1px solid var(--line);
   background: color-mix(in oklch, var(--surface), var(--surface-raised) 52%);
   padding: var(--space-4);
+}
+
+.trace-import-panel::after,
+.result-actions::after {
+  position: absolute;
+  border: 2px dashed transparent;
+  border-radius: var(--radius-md);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    background-color 150ms var(--ease-out),
+    border-color 150ms var(--ease-out),
+    box-shadow 150ms var(--ease-out),
+    opacity 150ms var(--ease-out);
+}
+
+.trace-import-panel::after {
+  inset: var(--space-2);
+}
+
+.result-actions::after {
+  inset: calc(-1 * var(--space-2));
+}
+
+.trace-import-panel.drop-zone-active::after,
+.result-actions.drop-zone-active::after {
+  border-color: var(--line-strong);
+  opacity: 1;
+}
+
+.trace-import-panel.drop-zone-over::after,
+.result-actions.drop-zone-over::after {
+  border-color: var(--accent);
+  background: color-mix(in oklch, var(--accent-soft), transparent 74%);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .trace-import-head {
@@ -918,6 +955,7 @@ textarea.trace-input {
 
 .result-actions {
   display: grid;
+  position: relative;
   gap: var(--space-2);
   align-items: end;
   flex: 0 0 auto;

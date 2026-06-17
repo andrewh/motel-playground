@@ -121,6 +121,10 @@ const bytesPerMiB = 1024 * 1024;
 const traceImportMaxMiB = 5;
 const traceImportMaxBytes = traceImportMaxMiB * bytesPerMiB;
 const disabledSignalsLabel = "none";
+const fileTransferType = "Files";
+const fileDropEffect = "copy";
+const dropZoneActiveClass = "drop-zone-active";
+const dropZoneOverClass = "drop-zone-over";
 
 const state = {
   ready: false,
@@ -141,6 +145,8 @@ const state = {
   rawOutput: "",
   rawOutputJSON: false,
   rawOutputDirty: false,
+  fileDragActive: false,
+  fileDragCancelled: false,
 };
 
 const emptyCopy = {
@@ -171,6 +177,7 @@ const els = {
   shortcutHelpButton: document.querySelector("#shortcut-help-button"),
   shortcutHelpClose: document.querySelector("#shortcut-help-close"),
   file: document.querySelector("#topology-file"),
+  traceDropZone: document.querySelector(".trace-import-panel"),
   traceFile: document.querySelector("#trace-file"),
   traceInput: document.querySelector("#trace-input"),
   traceFormat: document.querySelector("#trace-format"),
@@ -180,6 +187,7 @@ const els = {
   save: document.querySelector("#save-button"),
   share: document.querySelector("#share-button"),
   resultFile: document.querySelector("#result-file"),
+  resultDropZone: document.querySelector(".result-actions"),
   importResults: document.querySelector("#import-results-button"),
   exportResults: document.querySelector("#export-results-button"),
   printReport: document.querySelector("#print-report-button"),
@@ -220,6 +228,22 @@ const els = {
 
 const resultTabs = Array.from(document.querySelectorAll(".tab"));
 const resultViewNames = new Set(resultTabs.map((tab) => tab.dataset.view));
+const fileDropTargets = [
+  {
+    element: els.traceDropZone,
+    input: els.traceFile,
+    disabled: () => els.loadTraces.disabled,
+    load: (file) => loadTraceFile(file),
+    reject: (message) => setTraceImportStatus(message, "bad"),
+  },
+  {
+    element: els.resultDropZone,
+    input: els.resultFile,
+    disabled: () => els.importResults.disabled,
+    load: (file) => loadResultsFile(file),
+    reject: (message) => setShareStatus(message, "bad"),
+  },
+];
 const editors = {
   topology: null,
   raw: null,
@@ -270,6 +294,16 @@ els.shortcutHelpPanel.addEventListener("keydown", (event) => {
   if (event.key === "Tab") trapModalFocus(event, els.shortcutHelpPanel);
 });
 document.addEventListener("keydown", handleGlobalShortcut);
+document.addEventListener("dragover", handleDocumentFileDragOver);
+document.addEventListener("drop", handleDocumentFileDrop);
+document.addEventListener("dragend", clearFileDropState);
+document.addEventListener("dragleave", handleDocumentFileDragLeave);
+for (const target of fileDropTargets) {
+  target.element.addEventListener("dragenter", (event) => handleFileDragEnter(event, target));
+  target.element.addEventListener("dragover", (event) => handleFileDragOver(event, target));
+  target.element.addEventListener("dragleave", (event) => handleFileDragLeave(event, target));
+  target.element.addEventListener("drop", (event) => handleFileDrop(event, target));
+}
 
 els.validate.addEventListener("click", () => validate());
 els.run.addEventListener("click", () => run());
@@ -374,6 +408,11 @@ function handleResultTabKeydown(event, tab) {
 
 function handleGlobalShortcut(event) {
   if (event.defaultPrevented || event.isComposing) return;
+  if (event.key === "Escape" && state.fileDragActive) {
+    event.preventDefault();
+    cancelFileDrag();
+    return;
+  }
   if (isPrivacyStatementOpen()) {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -461,6 +500,117 @@ function isTextEntryTarget(target) {
   if (!(target instanceof Element)) return false;
   if (target.closest('[contenteditable="true"]')) return true;
   return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
+
+function handleDocumentFileDragOver(event) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  if (fileDropTargets.some((target) => target.element.contains(event.target))) return;
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+  syncFileDropZones();
+}
+
+function handleDocumentFileDrop(event) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  clearFileDropState();
+}
+
+function handleDocumentFileDragLeave(event) {
+  if (event.target !== document.documentElement && event.target !== document.body) return;
+  clearFileDropState();
+}
+
+function handleFileDragEnter(event, target) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  beginFileDrag();
+  syncFileDropZones(target);
+}
+
+function handleFileDragOver(event, target) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = canDropFile(target) ? fileDropEffect : "none";
+  }
+  beginFileDrag();
+  syncFileDropZones(target);
+}
+
+function handleFileDragLeave(event, target) {
+  // relatedTarget is null when the pointer crosses internal boundaries in some
+  // browsers; treat that as "still inside" so the highlight does not flicker.
+  if (!event.relatedTarget || event.currentTarget.contains(event.relatedTarget)) return;
+  target.element.classList.remove(dropZoneOverClass);
+}
+
+function handleFileDrop(event, target) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const files = event.dataTransfer?.files ?? [];
+  const file = files[0];
+  const cancelled = state.fileDragCancelled;
+  clearFileDropState();
+  if (cancelled || !file || !canDropFile(target)) return;
+  if (files.length > 1) {
+    target.reject("Drop a single file to import.");
+    return;
+  }
+  if (!fileMatchesAccept(file, target.input.accept)) {
+    target.reject(`Unsupported file type: ${file.name}`);
+    return;
+  }
+  void target.load(file);
+}
+
+function beginFileDrag() {
+  if (state.fileDragCancelled) return;
+  state.fileDragActive = true;
+}
+
+function cancelFileDrag() {
+  state.fileDragCancelled = true;
+  state.fileDragActive = false;
+  syncFileDropZones();
+}
+
+function clearFileDropState() {
+  state.fileDragActive = false;
+  state.fileDragCancelled = false;
+  syncFileDropZones();
+}
+
+function syncFileDropZones(overTarget) {
+  for (const target of fileDropTargets) {
+    const active = state.fileDragActive && !state.fileDragCancelled && canDropFile(target);
+    target.element.classList.toggle(dropZoneActiveClass, active);
+    target.element.classList.toggle(dropZoneOverClass, active && target === overTarget);
+  }
+}
+
+function hasDraggedFiles(event) {
+  return Array.from(event.dataTransfer?.types ?? []).includes(fileTransferType);
+}
+
+function canDropFile(target) {
+  return !target.disabled();
+}
+
+function fileMatchesAccept(file, accept) {
+  const tokens = (accept ?? "")
+    .split(",")
+    .map((token) => token.trim().toLowerCase())
+    .filter(Boolean);
+  if (tokens.length === 0) return true;
+  const name = file.name.toLowerCase();
+  const type = (file.type ?? "").toLowerCase();
+  return tokens.some((token) => {
+    if (token.startsWith(".")) return name.endsWith(token);
+    if (token.endsWith("/*")) return type.startsWith(token.slice(0, -1));
+    return Boolean(type) && type === token;
+  });
 }
 
 function focusResultFilter() {
@@ -918,8 +1068,8 @@ async function loadTopologyFile() {
   }
 }
 
-async function loadTraceFile() {
-  const [file] = els.traceFile.files ?? [];
+async function loadTraceFile(sourceFile) {
+  const [file] = sourceFile ? [sourceFile] : els.traceFile.files ?? [];
   if (!file) return;
   try {
     if (file.size > traceImportMaxBytes) {
@@ -979,8 +1129,8 @@ function printReport() {
   window.print();
 }
 
-async function loadResultsFile() {
-  const [file] = els.resultFile.files ?? [];
+async function loadResultsFile(sourceFile) {
+  const [file] = sourceFile ? [sourceFile] : els.resultFile.files ?? [];
   if (!file) return;
   try {
     const snapshot = parseResultSnapshot(await file.text());
