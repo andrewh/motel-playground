@@ -19,6 +19,9 @@ func main() {
 	js.Global().Set("motelImportTraces", async(func(args []js.Value) (string, error) {
 		return playground.ToJSON(playground.ImportTraces(args[0].String(), stringArg(args, 1, "auto"))), nil
 	}))
+	js.Global().Set("motelReplayTraces", async(func(args []js.Value) (string, error) {
+		return playground.ToJSON(playground.ImportReplay(args[0].String(), stringArg(args, 1, "auto"), replayConfigArg(args, 2))), nil
+	}))
 	js.Global().Set("motelRun", async(func(args []js.Value) (string, error) {
 		duration := secondsArg(args, 1, 1)
 		seed := uint64(numberArg(args, 2, 1))
@@ -46,6 +49,20 @@ func runSignalsArg(args []js.Value, index int) playground.RunSignals {
 	signals.Metrics = boolProperty(value, "metrics", signals.Metrics)
 	signals.Logs = boolProperty(value, "logs", signals.Logs)
 	return signals
+}
+
+func replayConfigArg(args []js.Value, index int) playground.ReplayConfig {
+	cfg := playground.ReplayConfig{}
+	if len(args) <= index {
+		return cfg
+	}
+	value := args[index]
+	if value.IsUndefined() || value.IsNull() || value.Type() != js.TypeObject {
+		return cfg
+	}
+	cfg.Verbatim = boolProperty(value, "verbatim", cfg.Verbatim)
+	cfg.PreserveIDs = boolProperty(value, "preserve_ids", cfg.PreserveIDs)
+	return cfg
 }
 
 func boolProperty(value js.Value, name string, fallback bool) bool {

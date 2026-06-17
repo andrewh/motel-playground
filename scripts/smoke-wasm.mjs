@@ -155,6 +155,29 @@ if (rejectedTraceImport.ok || !rejectedTraceImport.diagnostics?.[0]?.message.inc
   throw new Error(`trace import accepted an unknown format: ${JSON.stringify(rejectedTraceImport)}`);
 }
 
+const replayed = JSON.parse(await globalThis.motelReplayTraces(traceFixture, "otlp"));
+if (
+  !replayed.ok
+  || replayed.stats?.traces !== 1
+  || replayed.stats?.spans !== 2
+  || replayed.spans?.length !== 2
+  || !replayed.topology?.graph
+) {
+  throw new Error(`replay did not re-emit recorded traces: ${JSON.stringify(replayed)}`);
+}
+const recordedTraceID = "0102030405060708090a0b0c0d0e0f10";
+if (replayed.spans.some((span) => span.trace_id === recordedTraceID)) {
+  throw new Error(`default replay should regenerate IDs, not echo the recorded trace ID: ${JSON.stringify(replayed.spans)}`);
+}
+const preservedReplay = JSON.parse(await globalThis.motelReplayTraces(traceFixture, "otlp", { preserve_ids: true }));
+if (
+  !preservedReplay.ok
+  || preservedReplay.spans?.length !== 2
+  || !preservedReplay.spans.every((span) => span.trace_id === recordedTraceID)
+) {
+  throw new Error(`preserve-ids replay did not echo the recorded trace ID: ${JSON.stringify(preservedReplay)}`);
+}
+
 const metricsOnlyRun = JSON.parse(await globalThis.motelRun(topology, 1, 7, { traces: false, metrics: true, logs: false }));
 if (
   !metricsOnlyRun.ok

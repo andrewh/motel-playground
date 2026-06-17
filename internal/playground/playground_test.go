@@ -491,6 +491,72 @@ const testStdouttraceMultiTrace = `{"Name":"GET /checkout","SpanContext":{"Trace
 {"Name":"GET /checkout","SpanContext":{"TraceID":"t2","SpanID":"f2"},"Parent":{"TraceID":"t2","SpanID":"0000000000000000"},"StartTime":"2024-01-01T00:00:01Z","EndTime":"2024-01-01T00:00:01.020Z","Attributes":[],"Resource":[{"Key":"service.name","Value":{"Type":"STRING","Value":"frontend"}}],"Status":{"Code":"Unset"},"InstrumentationScope":{"Name":"frontend"}}
 {"Name":"query","SpanContext":{"TraceID":"t2","SpanID":"b2"},"Parent":{"TraceID":"t2","SpanID":"f2"},"StartTime":"2024-01-01T00:00:01.005Z","EndTime":"2024-01-01T00:00:01.015Z","Attributes":[{"Key":"db.system","Value":{"Type":"STRING","Value":"postgresql"}}],"Resource":[{"Key":"service.name","Value":{"Type":"STRING","Value":"backend"}}],"Status":{"Code":"Unset"},"InstrumentationScope":{"Name":"backend"}}`
 
+func TestImportReplayReproducesRecordedTraces(t *testing.T) {
+	result := ImportReplay(testStdouttraceMultiTrace, traceFormatStdout, ReplayConfig{})
+	if !result.OK {
+		t.Fatalf("ImportReplay() failed: %#v", result.Errors)
+	}
+	// Replay re-emits the recorded traces exactly: 2 traces, 4 spans.
+	if result.Stats == nil || result.Stats.Traces != 2 || result.Stats.Spans != 4 {
+		t.Fatalf("ImportReplay() stats = %#v, want 2 traces and 4 spans", result.Stats)
+	}
+	if len(result.Spans) != 4 {
+		t.Fatalf("ImportReplay() captured %d spans, want 4", len(result.Spans))
+	}
+	// The inferred topology should still be summarised for the service map.
+	if result.Topology == nil || len(result.Topology.Services) == 0 {
+		t.Fatalf("ImportReplay() topology summary missing: %#v", result.Topology)
+	}
+	services := map[string]bool{}
+	for _, span := range result.Spans {
+		services[span.Service] = true
+	}
+	if !services["frontend"] || !services["backend"] {
+		t.Fatalf("ImportReplay() spans missing recorded services: %#v", services)
+	}
+	// Default replay regenerates IDs, so they must not match the recorded hex.
+	for _, span := range result.Spans {
+		if span.SpanID == "f1" || span.SpanID == "b1" {
+			t.Fatalf("ImportReplay() leaked recorded span ID without PreserveIDs: %q", span.SpanID)
+		}
+	}
+}
+
+func TestImportReplayPreserveIDs(t *testing.T) {
+	// The OTLP fixture carries full-width IDs, so PreserveIDs can round-trip them.
+	// traceId AQIDBAUGBwgJCgsMDQ4PEA== decodes to 0102030405060708090a0b0c0d0e0f10.
+	const wantTraceID = "0102030405060708090a0b0c0d0e0f10"
+	result := ImportReplay(testOTLPTrace, traceFormatOTLP, ReplayConfig{PreserveIDs: true})
+	if !result.OK {
+		t.Fatalf("ImportReplay() failed: %#v", result.Errors)
+	}
+	if len(result.Spans) == 0 {
+		t.Fatalf("ImportReplay(PreserveIDs) captured no spans")
+	}
+	for _, span := range result.Spans {
+		if span.TraceID != wantTraceID {
+			t.Fatalf("ImportReplay(PreserveIDs) trace ID = %q, want %q", span.TraceID, wantTraceID)
+		}
+	}
+	spanIDs := map[string]bool{}
+	for _, span := range result.Spans {
+		spanIDs[span.SpanID] = true
+	}
+	if !spanIDs["0102030405060708"] {
+		t.Fatalf("ImportReplay(PreserveIDs) did not preserve recorded span IDs: %#v", spanIDs)
+	}
+}
+
+func TestImportReplayRejectsUnknownFormat(t *testing.T) {
+	result := ImportReplay(testStdouttraceMultiTrace, "zipkin", ReplayConfig{})
+	if result.OK {
+		t.Fatalf("ImportReplay() with unknown format succeeded")
+	}
+	if len(result.Errors) == 0 || !strings.Contains(result.Errors[0].Message, "unknown trace format") {
+		t.Fatalf("ImportReplay() errors = %#v, want unknown format error", result.Errors)
+	}
+}
+
 func TestRunSignalSelection(t *testing.T) {
 	run := Run(testSignalTopology, testRunDuration, testRunSeed, RunSignals{
 		Traces:  true,
