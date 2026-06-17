@@ -1488,18 +1488,18 @@ input[type="search"] {
 .service-map.graph-map {
   display: block;
   position: relative;
-  min-height: min(58vh, 620px);
+  height: min(58vh, 620px);
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
 
+/* Fill the whole container so the entire div is the pan/zoom surface. */
 .graph-svg {
   display: block;
   width: 100%;
-  height: auto;
-  max-height: min(58vh, 620px);
+  height: 100%;
   cursor: grab;
   touch-action: none;
 }
@@ -1537,7 +1537,7 @@ input[type="search"] {
   cursor: grab;
 }
 
-.graph-node.is-dragging {
+.graph-node:active {
   cursor: grabbing;
 }
 

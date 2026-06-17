@@ -66,13 +66,16 @@
       .attr("viewBox", `${num(bounds.minX)} ${num(bounds.minY)} ${num(bounds.width)} ${num(bounds.height)}`)
       .attr("preserveAspectRatio", "xMidYMid meet");
 
+    // userSpaceOnUse keeps the arrowhead a fixed small size instead of scaling
+    // with stroke-width (thick edges otherwise get oversized, skewed arrows).
     svg.append("defs").append("marker")
       .attr("id", "graph-arrow")
       .attr("viewBox", "0 0 10 10")
       .attr("refX", 9)
       .attr("refY", 5)
-      .attr("markerWidth", 7)
-      .attr("markerHeight", 7)
+      .attr("markerUnits", "userSpaceOnUse")
+      .attr("markerWidth", 9)
+      .attr("markerHeight", 9)
       .attr("orient", "auto-start-reverse")
       .append("path")
       .attr("class", "graph-arrowhead")
@@ -144,30 +147,30 @@
       .on("focus", function (event, node) { activate(node, this); })
       .on("blur", deactivate);
 
-    // Dragging a node updates its position and re-routes its links live.
-    const drag = d3.drag()
-      .on("start", function (event) {
-        if (event.sourceEvent && event.sourceEvent.stopPropagation) event.sourceEvent.stopPropagation();
-        d3.select(this).raise().classed("is-dragging", true);
-      })
-      .on("drag", function (event, node) {
-        node.x = event.x;
-        node.y = event.y;
-        d3.select(this).attr("transform", `translate(${num(node.x)} ${num(node.y)})`);
-        linkSel.filter((link) => link.source === node || link.target === node).attr("d", linkPath);
-      })
-      .on("end", function () {
-        d3.select(this).classed("is-dragging", false);
-      });
-    nodeSel.call(drag);
-
-    // Pan / zoom the whole viewport.
+    // Pan / zoom the whole viewport. Nodes are intentionally not draggable; a
+    // press starting anywhere (including on a node) pans the map instead.
     const zoom = d3.zoom()
       .scaleExtent([ZOOM_MIN, ZOOM_MAX])
+      .on("start", deactivate)
       .on("zoom", (event) => viewport.attr("transform", event.transform));
     svg.call(zoom);
 
+    // A press anywhere that isn't a node dismisses the tooltip (bound once).
+    bindGlobalDismiss();
+
     if (links.length) root.append("div").attr("class", "graph-key").attr("aria-hidden", "true").html(lineKeyMarkup());
+  }
+
+  let dismissBound = false;
+  function bindGlobalDismiss() {
+    if (dismissBound) return;
+    dismissBound = true;
+    document.addEventListener("pointerdown", (event) => {
+      const target = event.target;
+      if (target && target.closest && target.closest(".graph-node")) return;
+      for (const tip of document.querySelectorAll(".graph-tooltip")) tip.hidden = true;
+      for (const edge of document.querySelectorAll(".graph-edge.is-active")) edge.classList.remove("is-active");
+    });
   }
 
   function lineKeyMarkup() {
