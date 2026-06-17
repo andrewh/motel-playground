@@ -183,6 +183,9 @@ const els = {
   traceFormat: document.querySelector("#trace-format"),
   loadTraces: document.querySelector("#load-traces-button"),
   importTraces: document.querySelector("#import-traces-button"),
+  replayTraces: document.querySelector("#replay-traces-button"),
+  replayVerbatim: document.querySelector("#replay-verbatim"),
+  replayPreserveIds: document.querySelector("#replay-preserve-ids"),
   load: document.querySelector("#load-button"),
   save: document.querySelector("#save-button"),
   share: document.querySelector("#share-button"),
@@ -316,6 +319,9 @@ els.share.addEventListener("click", () => {
 });
 els.importTraces.addEventListener("click", () => {
   void importTraces();
+});
+els.replayTraces.addEventListener("click", () => {
+  void replayTraces();
 });
 els.importResults.addEventListener("click", () => els.resultFile.click());
 els.exportResults.addEventListener("click", () => exportResults());
@@ -1211,6 +1217,75 @@ async function importTraces() {
   }
 }
 
+async function replayTraces() {
+  if (!state.ready || state.runtimeBusy) return;
+  const source = els.traceInput.value.trim();
+  const options = currentReplayOptions();
+  const telemetryParams = traceReplayTelemetryParams(source, els.traceFormat.value, options);
+  if (!source) {
+    setTraceImportStatus("Trace input is empty.", "bad");
+    return;
+  }
+  if (traceInputBytes(source) > traceImportMaxBytes) {
+    trackEvent(telemetryEventNames.traceReplayFailed, {
+      ...telemetryParams,
+      error_category: "too_large",
+    });
+    setTraceImportStatus(`Trace input exceeds ${traceImportMaxMiB} MB.`, "bad");
+    return;
+  }
+
+  setRuntimeBusy(true, "Replaying traces");
+  trackEvent(telemetryEventNames.traceReplayStarted, telemetryParams);
+  try {
+    const result = JSON.parse(await traceAsync(
+      telemetrySpanNames.traceReplay,
+      () => window.motelReplayTraces(source, els.traceFormat.value, {
+        verbatim: options.verbatim,
+        preserve_ids: options.preserveIds,
+      }),
+      telemetryParams,
+    ));
+    const settings = currentRunSettings();
+    renderRun(result, { topology: result.topology ?? getTopologyValue(), settings });
+    renderRawJson(result);
+    if (!result.ok) {
+      trackEvent(telemetryEventNames.traceReplayFailed, {
+        ...telemetryParams,
+        error_category: "engine",
+      });
+      setTraceImportStatus(`Replay failed: ${result.errors?.[0]?.message ?? "unknown error"}`, "bad");
+      return;
+    }
+    setTraceImportStatus(traceReplaySummary(result), "good");
+    trackEvent(telemetryEventNames.traceReplayCompleted, {
+      ...telemetryParams,
+      ...runStatsTelemetryParams(result),
+    });
+  } catch (error) {
+    trackEvent(telemetryEventNames.traceReplayFailed, {
+      ...telemetryParams,
+      error_category: categorizeError(error),
+    });
+    setTraceImportStatus(`Replay failed: ${error.message}`, "bad");
+  } finally {
+    setRuntimeBusy(false);
+  }
+}
+
+function currentReplayOptions() {
+  return {
+    verbatim: els.replayVerbatim.checked,
+    preserveIds: els.replayPreserveIds.checked,
+  };
+}
+
+function traceReplaySummary(result) {
+  const traces = result?.stats?.traces ?? 0;
+  const spans = result?.stats?.spans ?? 0;
+  return `Replayed ${traces} traces, ${spans} spans`;
+}
+
 function makeCurrentResultSnapshot() {
   return createResultSnapshot({
     topology: state.lastRunSource?.topology ?? getTopologyValue(),
@@ -1267,6 +1342,14 @@ function traceImportTelemetryParams(source, format) {
   return {
     format: format || "auto",
     size_bucket: bucketBytes(traceInputBytes(source)),
+  };
+}
+
+function traceReplayTelemetryParams(source, format, options) {
+  return {
+    ...traceImportTelemetryParams(source, format),
+    verbatim: Boolean(options?.verbatim),
+    preserve_ids: Boolean(options?.preserveIds),
   };
 }
 
@@ -2431,6 +2514,7 @@ function syncControls(label) {
   els.generate.disabled = state.runtimeBusy;
   els.loadTraces.disabled = state.runtimeBusy || !state.ready;
   els.importTraces.disabled = state.runtimeBusy || !state.ready;
+  els.replayTraces.disabled = state.runtimeBusy || !state.ready;
   els.importResults.disabled = state.runtimeBusy || !state.ready;
   els.exportResults.disabled = state.runtimeBusy || !state.lastRun;
   els.printReport.disabled = state.runtimeBusy || !state.lastRun;

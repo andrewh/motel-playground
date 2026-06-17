@@ -24,6 +24,9 @@ export const telemetryEventNames = Object.freeze({
   traceImportStarted: "trace_import_started",
   traceImportCompleted: "trace_import_completed",
   traceImportFailed: "trace_import_failed",
+  traceReplayStarted: "trace_replay_started",
+  traceReplayCompleted: "trace_replay_completed",
+  traceReplayFailed: "trace_replay_failed",
   resultExported: "result_exported",
   resultImported: "result_imported",
   resultImportFailed: "result_import_failed",
@@ -39,6 +42,7 @@ export const telemetrySpanNames = Object.freeze({
   resultRender: "motel.result.render",
   serviceMapRender: "motel.service_map.render",
   traceImport: "motel.trace_import",
+  traceReplay: "motel.trace_replay",
 });
 
 const byteBucketSmallLimit = 10 * 1024;

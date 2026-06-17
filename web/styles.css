@@ -634,6 +634,50 @@ button.invalid {
   gap: var(--space-1);
 }
 
+.trace-replay-options {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: end;
+  gap: var(--space-3);
+  color: var(--muted);
+}
+
+.trace-replay-options-label {
+  font-weight: 620;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.68rem;
+  color: var(--muted-strong);
+}
+
+.checkbox-option {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 0.78rem;
+  font-weight: 500;
+  text-transform: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.checkbox-option input[type="checkbox"] {
+  appearance: auto;
+  width: 15px;
+  height: 15px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  flex: none;
+  accent-color: var(--ink);
+  cursor: pointer;
+}
+
 .trace-input-field {
   gap: var(--space-2);
 }

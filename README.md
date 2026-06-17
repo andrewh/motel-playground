@@ -12,10 +12,15 @@ from one-shot runs into a live observability workbench.
 
 ## Current Scope
 
-- Go WASM bridge exposing `Validate`, `Run`, and `Preview` style functions.
+- Go WASM bridge exposing `Validate`, `Run`, `Preview`, trace import, and trace
+  replay functions.
 - Static frontend with a topology YAML editor, validation, bounded run controls,
   local YAML load/save, random topology generation, traffic preview SVG, span
   waterfall, service map, and raw JSON output.
+- Trace import infers a topology from pasted OTLP/stdouttrace data; **Replay
+  traces** re-emits those exact traces (shape, timing, attributes, errors) into
+  the waterfall and service map instead of sampling the inferred model, with
+  verbatim-timestamp and preserve-ID toggles.
 - `andrewh/motel` checked out as a Git submodule at `third_party/motel` so the
   playground can build against a pinned engine revision without copying the
   whole codebase into this repository.

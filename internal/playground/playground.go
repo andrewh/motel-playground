@@ -427,6 +427,96 @@ func ImportTraces(source string, format string) TraceImportResult {
 	}
 }
 
+// ReplayConfig controls how imported traces are re-emitted in replay mode.
+type ReplayConfig struct {
+	Verbatim    bool `json:"verbatim"`
+	PreserveIDs bool `json:"preserve_ids"`
+}
+
+// ImportReplay imports traces and re-emits them faithfully via motel's replay
+// mode, rather than sampling the probabilistic model the importer infers. It
+// returns a RunResult so the frontend can reuse its run rendering (waterfall,
+// service map, raw JSON). The service map is drawn from the inferred topology;
+// the spans are the recorded traces themselves.
+func ImportReplay(source string, format string, opts ReplayConfig) RunResult {
+	traceFormat, ok := parseTraceImportFormat(format)
+	if !ok {
+		return replayError(fmt.Errorf("unknown trace format %q", format))
+	}
+
+	// Import both infers a topology (for the service map) and, via RecordTo,
+	// writes a newline-delimited recording of the source traces we replay.
+	var recording bytes.Buffer
+	var warnings bytes.Buffer
+	imported, err := traceimport.Import(strings.NewReader(source), traceimport.Options{
+		Format:   traceFormat,
+		Warnings: &warnings,
+		RecordTo: &recording,
+	})
+	if err != nil {
+		return replayError(err)
+	}
+
+	// Replay's relative time-shift needs a scan pass before the emit pass, so we
+	// hand a fresh reader over the same bytes to each.
+	data := recording.Bytes()
+	info, err := synth.ScanRecordingFrom(bytes.NewReader(data))
+	if err != nil {
+		return replayError(err)
+	}
+	if len(info.Services) == 0 {
+		return replayError(fmt.Errorf("no spans to replay"))
+	}
+
+	observer := &captureObserver{}
+	// The replay ID generator returns recorded IDs injected through context when
+	// PreserveIDs is set, and fresh IDs otherwise, so one provider serves both.
+	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithIDGenerator(synth.NewReplayIDGenerator()))
+	defer func() { _ = tracerProvider.Shutdown(context.Background()) }()
+	tracers := func(serviceName string) trace.Tracer { return tracerProvider.Tracer(serviceName) }
+
+	ctx, cancel := context.WithTimeout(context.Background(), maxDuration+2*time.Second)
+	defer cancel()
+
+	stats, err := synth.ReplayRecordingFrom(ctx, bytes.NewReader(data), tracers, []synth.SpanObserver{observer}, synth.ReplayOptions{
+		Verbatim:    opts.Verbatim,
+		PreserveIDs: opts.PreserveIDs,
+		Start:       info.Start,
+	})
+	if err != nil {
+		return replayError(err)
+	}
+
+	spans := observer.Records()
+	return RunResult{
+		OK:       true,
+		Stats:    stats,
+		Topology: replayTopology(imported.YAML),
+		Spans:    spans,
+		Signals:  RunSignals{Traces: true},
+		Limits:   limits(0, len(spans), 0, 0),
+	}
+}
+
+// replayTopology summarises the inferred topology YAML for the service map.
+// A nil summary is fine: the frontend skips the map when topology is absent.
+func replayTopology(yaml []byte) *TopologySummary {
+	cfg, topo, _, err := load(string(yaml))
+	if err != nil {
+		return nil
+	}
+	return summariseConfig(cfg, topo)
+}
+
+func replayError(err error) RunResult {
+	return RunResult{
+		OK:      false,
+		Errors:  []Diagnostic{{Severity: "error", Message: err.Error()}},
+		Signals: RunSignals{Traces: true},
+		Limits:  limits(0, 0, 0, 0),
+	}
+}
+
 func Run(source string, duration time.Duration, seed uint64, signals RunSignals, slowThresholds ...time.Duration) RunResult {
 	if duration <= 0 {
 		duration = defaultDuration

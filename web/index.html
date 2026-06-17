@@ -78,6 +78,18 @@
                 </label>
                 <button id="load-traces-button" type="button">Load trace file</button>
                 <button id="import-traces-button" type="button">Infer topology</button>
+                <button id="replay-traces-button" type="button">Replay traces</button>
+                <div class="trace-replay-options">
+                  <span class="trace-replay-options-label">Replay</span>
+                  <label class="checkbox-option">
+                    <input id="replay-verbatim" type="checkbox" />
+                    Verbatim timestamps
+                  </label>
+                  <label class="checkbox-option">
+                    <input id="replay-preserve-ids" type="checkbox" />
+                    Preserve IDs
+                  </label>
+                </div>
               </div>
             </div>
             <label class="trace-input-field">
