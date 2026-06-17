@@ -547,6 +547,78 @@ func TestImportReplayPreserveIDs(t *testing.T) {
 	}
 }
 
+func TestImportReplayPreserveIDsHexEncoded(t *testing.T) {
+	// Grafana/Tempo-style OTLP JSON hex-encodes IDs. A 32-char hex trace ID is
+	// also valid base64, so the importer must decode it as hex; otherwise
+	// preserve-IDs replay fails with an invalid recorded trace ID. Guards the
+	// playground integration against a regression of motel's otlpID decoder.
+	const wantTraceID = "0102030405060708090a0b0c0d0e0f10"
+	result := ImportReplay(testOTLPTraceHexIDs, traceFormatOTLP, ReplayConfig{PreserveIDs: true})
+	if !result.OK {
+		t.Fatalf("ImportReplay() failed: %#v", result.Errors)
+	}
+	if len(result.Spans) != 2 {
+		t.Fatalf("ImportReplay() captured %d spans, want 2", len(result.Spans))
+	}
+	for _, span := range result.Spans {
+		if span.TraceID != wantTraceID {
+			t.Fatalf("ImportReplay(PreserveIDs) trace ID = %q, want %q (hex ID must not be base64-mangled)", span.TraceID, wantTraceID)
+		}
+	}
+	spanIDs := map[string]bool{}
+	for _, span := range result.Spans {
+		spanIDs[span.SpanID] = true
+	}
+	if !spanIDs["0102030405060708"] {
+		t.Fatalf("ImportReplay(PreserveIDs) did not preserve hex span IDs: %#v", spanIDs)
+	}
+}
+
+const testOTLPTraceHexIDs = `{
+  "resourceSpans": [
+    {
+      "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "api-gateway"}}]},
+      "scopeSpans": [
+        {
+          "scope": {"name": "api-gateway"},
+          "spans": [
+            {
+              "traceId": "0102030405060708090a0b0c0d0e0f10",
+              "spanId": "0102030405060708",
+              "parentSpanId": "",
+              "name": "GET /users",
+              "startTimeUnixNano": "1700000000000000000",
+              "endTimeUnixNano": "1700000000030000000",
+              "status": {},
+              "attributes": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "user-service"}}]},
+      "scopeSpans": [
+        {
+          "scope": {"name": "user-service"},
+          "spans": [
+            {
+              "traceId": "0102030405060708090a0b0c0d0e0f10",
+              "spanId": "090a0b0c0d0e0f10",
+              "parentSpanId": "0102030405060708",
+              "name": "list",
+              "startTimeUnixNano": "1700000000005000000",
+              "endTimeUnixNano": "1700000000020000000",
+              "status": {},
+              "attributes": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}`
+
 func TestImportReplayRejectsUnknownFormat(t *testing.T) {
 	result := ImportReplay(testStdouttraceMultiTrace, "zipkin", ReplayConfig{})
 	if result.OK {
