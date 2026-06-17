@@ -563,6 +563,7 @@ button.invalid {
   opacity: 0;
   pointer-events: none;
   transition:
+    background-color 150ms var(--ease-out),
     border-color 150ms var(--ease-out),
     box-shadow 150ms var(--ease-out),
     opacity 150ms var(--ease-out);
@@ -585,9 +586,8 @@ button.invalid {
 .trace-import-panel.drop-zone-over::after,
 .result-actions.drop-zone-over::after {
   border-color: var(--accent);
-  box-shadow:
-    0 0 0 3px var(--accent-soft),
-    inset 0 0 0 999px color-mix(in oklch, var(--accent-soft), transparent 74%);
+  background: color-mix(in oklch, var(--accent-soft), transparent 74%);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .trace-import-head {

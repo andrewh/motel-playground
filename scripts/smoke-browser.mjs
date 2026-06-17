@@ -393,6 +393,16 @@ try {
   if (traceAfterIgnoredDrop.status || traceAfterIgnoredDrop.traceInput || !ignoredTraceDrop.defaultPrevented) {
     throw new Error(`cancelled trace drag still imported a file: ${JSON.stringify({ ignoredTraceDrop, traceAfterIgnoredDrop })}`);
   }
+  const unsupportedTraceDrop = await dispatchFileDrop(client, ".trace-import-panel", traceFixture, "trace.csv", "text/csv");
+  await delay(100);
+  const traceAfterUnsupportedDrop = await evaluate(client, `(${fileDropClassState})(".trace-import-panel")`);
+  if (
+    traceAfterUnsupportedDrop.traceInput
+    || !traceAfterUnsupportedDrop.status.includes("Unsupported file type")
+    || !unsupportedTraceDrop.defaultPrevented
+  ) {
+    throw new Error(`unsupported trace drop was not rejected: ${JSON.stringify({ unsupportedTraceDrop, traceAfterUnsupportedDrop })}`);
+  }
   await dispatchFileDrop(client, ".trace-import-panel", traceFixture, "trace.json");
   const loadedTrace = await waitFor(async () => {
     const state = await evaluate(client, `(${traceImportLoadState})()`);

@@ -231,13 +231,17 @@ const resultViewNames = new Set(resultTabs.map((tab) => tab.dataset.view));
 const fileDropTargets = [
   {
     element: els.traceDropZone,
+    input: els.traceFile,
     disabled: () => els.loadTraces.disabled,
     load: (file) => loadTraceFile(file),
+    reject: (message) => setTraceImportStatus(message, "bad"),
   },
   {
     element: els.resultDropZone,
+    input: els.resultFile,
     disabled: () => els.importResults.disabled,
     load: (file) => loadResultsFile(file),
+    reject: (message) => setShareStatus(message, "bad"),
   },
 ];
 const editors = {
@@ -535,7 +539,9 @@ function handleFileDragOver(event, target) {
 }
 
 function handleFileDragLeave(event, target) {
-  if (event.currentTarget.contains(event.relatedTarget)) return;
+  // relatedTarget is null when the pointer crosses internal boundaries in some
+  // browsers; treat that as "still inside" so the highlight does not flicker.
+  if (!event.relatedTarget || event.currentTarget.contains(event.relatedTarget)) return;
   target.element.classList.remove(dropZoneOverClass);
 }
 
@@ -543,10 +549,19 @@ function handleFileDrop(event, target) {
   if (!hasDraggedFiles(event)) return;
   event.preventDefault();
   event.stopPropagation();
-  const file = event.dataTransfer?.files?.[0];
+  const files = event.dataTransfer?.files ?? [];
+  const file = files[0];
   const cancelled = state.fileDragCancelled;
   clearFileDropState();
   if (cancelled || !file || !canDropFile(target)) return;
+  if (files.length > 1) {
+    target.reject("Drop a single file to import.");
+    return;
+  }
+  if (!fileMatchesAccept(file, target.input.accept)) {
+    target.reject(`Unsupported file type: ${file.name}`);
+    return;
+  }
   void target.load(file);
 }
 
@@ -581,6 +596,21 @@ function hasDraggedFiles(event) {
 
 function canDropFile(target) {
   return !target.disabled();
+}
+
+function fileMatchesAccept(file, accept) {
+  const tokens = (accept ?? "")
+    .split(",")
+    .map((token) => token.trim().toLowerCase())
+    .filter(Boolean);
+  if (tokens.length === 0) return true;
+  const name = file.name.toLowerCase();
+  const type = (file.type ?? "").toLowerCase();
+  return tokens.some((token) => {
+    if (token.startsWith(".")) return name.endsWith(token);
+    if (token.endsWith("/*")) return type.startsWith(token.slice(0, -1));
+    return Boolean(type) && type === token;
+  });
 }
 
 function focusResultFilter() {
