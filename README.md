@@ -37,6 +37,20 @@ Vendored browser dependencies live under `web/vendor/`, each with its license:
 Observable Plot is pinned at `0.6.17` (`web/vendor/plot/`) and its d3 dependency
 at `7.9.0` (`web/vendor/d3/`).
 
+## Sessions and run history
+
+Every successful run is recorded into a session history, shown in the
+**History** result tab and persisted in browser storage so it survives
+reloads. Each entry stores the topology YAML, run settings, and summary
+statistics; full run results are stored too while they fit the storage
+budget, and oversized runs degrade to settings-only entries that reproduce
+their results on re-run through the recorded seed.
+
+Use **Restore** on an entry to bring a recorded run back into the
+workbench, **Save session** to download the history as a JSON file, and
+**Load session** to replace the history from a saved file. Session content
+stays in the browser; see `docs/sessions.md` for the design.
+
 ## Sharing configurations
 
 Use **Copy link** in the playground to share the current topology

@@ -87,6 +87,10 @@ function normalizeRunResult(result) {
   return normalized;
 }
 
+export function normalizeSnapshotSettings(settings = {}) {
+  return normalizeSettings(settings);
+}
+
 function normalizeSettings(settings = {}) {
   const source = isRecord(settings) ? settings : {};
   return {

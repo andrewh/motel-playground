@@ -13,6 +13,17 @@ import {
   resultSnapshotMimeType,
 } from "./result-snapshot.mjs";
 import {
+  createSessionDocument,
+  createSessionEntry,
+  createSessionStore,
+  entryResultSnapshot,
+  parseSessionFile,
+  sessionFilename,
+  sessionFileText,
+  sessionMimeType,
+  sessionStorageKey,
+} from "./session-history.mjs";
+import {
   bucketBytes,
   categorizeError,
   elapsedMilliseconds,
@@ -227,6 +238,15 @@ const els = {
     spans: document.querySelector("#metric-spans"),
     errors: document.querySelector("#metric-errors"),
   },
+  history: {
+    list: document.querySelector("#history-list"),
+    count: document.querySelector("#history-count"),
+    status: document.querySelector("#history-status"),
+    file: document.querySelector("#session-file"),
+    load: document.querySelector("#load-session-button"),
+    save: document.querySelector("#save-session-button"),
+    clear: document.querySelector("#clear-session-button"),
+  },
 };
 
 const resultTabs = Array.from(document.querySelectorAll(".tab"));
@@ -253,10 +273,13 @@ const editors = {
 };
 let lastShortcutFocus = null;
 let lastPrivacyFocus = null;
+const sessionStore = createSessionStore({ storage: sessionStorageAdapter() });
 
 els.editor.value = sampleTopology;
 clearMap(emptyCopy.map);
 clearSignalOutput();
+sessionStore.load();
+renderHistory();
 
 initTelemetry();
 initTheme();
@@ -325,6 +348,12 @@ els.replayTraces.addEventListener("click", () => {
 });
 els.importResults.addEventListener("click", () => els.resultFile.click());
 els.exportResults.addEventListener("click", () => exportResults());
+els.history.load.addEventListener("click", () => els.history.file.click());
+els.history.save.addEventListener("click", () => saveSession());
+els.history.clear.addEventListener("click", () => clearSession());
+els.history.file.addEventListener("change", () => {
+  void loadSessionFile();
+});
 els.printReport.addEventListener("click", () => printReport());
 els.file.addEventListener("change", () => loadTopologyFile());
 els.traceFile.addEventListener("change", () => {
@@ -496,7 +525,7 @@ function handleGlobalShortcut(event) {
     return;
   }
 
-  if (/^[1-6]$/.test(event.key)) {
+  if (/^[1-7]$/.test(event.key)) {
     event.preventDefault();
     activateTab(resultTabs[Number(event.key) - 1]);
   }
@@ -986,6 +1015,7 @@ async function run() {
     renderRun(result, { topology, settings });
     renderRawJson(result);
     if (result.ok) {
+      recordSessionEntry({ topology, settings }, result);
       trackEvent(telemetryEventNames.runCompleted, {
         ...telemetryParams,
         ...runStatsTelemetryParams(result),
@@ -1284,6 +1314,193 @@ function traceReplaySummary(result) {
   const traces = result?.stats?.traces ?? 0;
   const spans = result?.stats?.spans ?? 0;
   return `Replayed ${traces} traces, ${spans} spans`;
+}
+
+function sessionStorageAdapter() {
+  try {
+    const storage = window.localStorage;
+    storage.getItem(sessionStorageKey);
+    return storage;
+  } catch {
+    return memorySessionStorage();
+  }
+}
+
+function memorySessionStorage() {
+  const data = new Map();
+  return {
+    getItem: (key) => (data.has(key) ? data.get(key) : null),
+    setItem: (key, value) => {
+      data.set(key, value);
+    },
+    removeItem: (key) => {
+      data.delete(key);
+    },
+  };
+}
+
+function recordSessionEntry(source, result) {
+  let entry;
+  try {
+    entry = createSessionEntry({ topology: source.topology, settings: source.settings, result });
+  } catch {
+    return;
+  }
+  const outcome = sessionStore.record(entry);
+  renderHistory();
+  if (outcome.persisted) {
+    setHistoryStatus("", "");
+  } else {
+    setHistoryStatus("History kept in memory only; browser storage is unavailable or full.", "bad");
+  }
+  const recorded = outcome.entries.at(-1);
+  trackEvent(telemetryEventNames.sessionEntryRecorded, {
+    entries: outcome.entries.length,
+    result_stored: Boolean(recorded?.result),
+    persisted: outcome.persisted,
+  });
+}
+
+function renderHistory() {
+  const entries = sessionStore.entries();
+  els.history.count.textContent = entries.length === 1 ? "1 run" : `${entries.length} runs`;
+  els.history.save.disabled = entries.length === 0;
+  els.history.clear.disabled = entries.length === 0;
+  if (entries.length === 0) {
+    els.history.list.innerHTML = `<p class="empty">Run the topology to start a session history.</p>`;
+    return;
+  }
+  els.history.list.innerHTML = entries
+    .slice()
+    .reverse()
+    .map((entry) => renderHistoryEntry(entry))
+    .join("");
+  for (const button of els.history.list.querySelectorAll("[data-history-action]")) {
+    button.addEventListener("click", () => {
+      void handleHistoryAction(button.dataset.historyAction, button.dataset.historyId);
+    });
+  }
+}
+
+function renderHistoryEntry(entry) {
+  const stats = entry.stats;
+  const detail = [
+    historyTime(entry.recorded_at),
+    `seed ${entry.settings.seed}`,
+    `${entry.settings.duration}s`,
+    `${stats.traces} traces`,
+    `${stats.spans} spans`,
+    `${stats.errors} errors`,
+  ].join(" · ");
+  return `<article class="history-item ${stats.errors > 0 ? "errored" : ""}">
+    <div class="history-meta">
+      <strong>${escapeHtml(entry.label)}</strong>
+      <span>${escapeHtml(detail)}</span>
+      <span class="history-note">${entry.result ? "results stored" : "settings only"}</span>
+    </div>
+    <div class="history-entry-actions">
+      <button type="button" data-history-action="restore" data-history-id="${escapeHtml(entry.id)}">Restore</button>
+      <button type="button" data-history-action="delete" data-history-id="${escapeHtml(entry.id)}">Delete</button>
+    </div>
+  </article>`;
+}
+
+async function handleHistoryAction(action, id) {
+  const entry = sessionStore.entries().find((item) => item.id === id);
+  if (!entry) return;
+  if (action === "restore") {
+    await restoreHistoryEntry(entry);
+    return;
+  }
+  if (action === "delete") {
+    sessionStore.remove(id);
+    renderHistory();
+    setHistoryStatus("Entry deleted", "good");
+    trackEvent(telemetryEventNames.sessionEntryDeleted, { entries: sessionStore.entries().length });
+  }
+}
+
+async function restoreHistoryEntry(entry) {
+  const snapshot = entryResultSnapshot(entry);
+  trackEvent(telemetryEventNames.sessionEntryRestored, { result_stored: Boolean(snapshot) });
+  if (snapshot) {
+    await applyResultSnapshot(snapshot);
+    const stats = snapshot.result.stats;
+    els.summary.textContent = `Restored run: ${stats.traces} traces, ${stats.spans} spans, ${stats.errors} errors`;
+    setHistoryStatus(`Restored run from ${historyTime(entry.recorded_at)}`, "good");
+    return;
+  }
+  setTopologyValue(entry.topology);
+  applyNumberInput(els.duration, entry.settings.duration);
+  applyNumberInput(els.slowThreshold, entry.settings.slowThresholdMs);
+  applyNumberInput(els.seed, entry.settings.seed);
+  applyNumberInput(els.maxNodes, entry.settings.maxNodes);
+  applySignalSettings(entry.settings.signals);
+  clearRunOutput(emptyCopy.spans);
+  clearSignalOutput();
+  clearRawOutput();
+  els.summary.classList.remove("bad", "good");
+  els.summary.textContent = "Restored topology and settings from history";
+  setHistoryStatus(`Restored settings from ${historyTime(entry.recorded_at)}; run to regenerate results.`, "good");
+  if (state.ready) await validate({ passive: true });
+}
+
+function saveSession() {
+  const entries = sessionStore.entries();
+  if (entries.length === 0) {
+    setHistoryStatus("Session history is empty.", "bad");
+    return;
+  }
+  const session = createSessionDocument(entries);
+  const filename = sessionFilename(session.saved_at);
+  downloadText(sessionFileText(session), { filename, type: sessionMimeType });
+  trackEvent(telemetryEventNames.sessionSaved, { entries: entries.length });
+  setHistoryStatus(`Saved ${filename}`, "good");
+}
+
+async function loadSessionFile() {
+  const [file] = els.history.file.files ?? [];
+  if (!file) return;
+  try {
+    const session = parseSessionFile(await file.text());
+    const outcome = sessionStore.replace(session.entries);
+    renderHistory();
+    trackEvent(telemetryEventNames.sessionLoaded, {
+      entries: outcome.entries.length,
+      size_bucket: bucketBytes(file.size),
+      persisted: outcome.persisted,
+    });
+    setHistoryStatus(`Loaded ${file.name}: ${outcome.entries.length} runs`, "good");
+  } catch (error) {
+    trackEvent(telemetryEventNames.sessionLoadFailed, {
+      size_bucket: bucketBytes(file.size),
+      error_category: categorizeError(error),
+    });
+    setHistoryStatus(`Could not load session: ${error.message}`, "bad");
+  } finally {
+    els.history.file.value = "";
+  }
+}
+
+function clearSession() {
+  sessionStore.clear();
+  renderHistory();
+  setHistoryStatus("Session history cleared", "good");
+  trackEvent(telemetryEventNames.sessionCleared);
+}
+
+function setHistoryStatus(message, kind) {
+  els.history.status.textContent = message;
+  els.history.status.classList.remove("good", "bad");
+  if (kind) {
+    els.history.status.classList.add(kind);
+  }
+}
+
+function historyTime(recordedAt) {
+  const time = new Date(recordedAt);
+  if (Number.isNaN(time.valueOf())) return "unknown time";
+  return time.toLocaleString(undefined, { dateStyle: "short", timeStyle: "medium" });
 }
 
 function makeCurrentResultSnapshot() {
