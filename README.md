@@ -41,10 +41,13 @@ at `7.9.0` (`web/vendor/d3/`).
 
 Every successful run is recorded into a session history, shown in the
 **History** result tab and persisted in browser storage so it survives
-reloads. Each entry stores the topology YAML, run settings, and summary
-statistics; full run results are stored too while they fit the storage
-budget, and oversized runs degrade to settings-only entries that reproduce
-their results on re-run through the recorded seed.
+reloads. When browser storage is unavailable (for example in some private
+browsing modes), the history is kept in memory for the current tab only
+and the History tab reports that persistence is off. Each entry stores the
+topology YAML, run settings, and summary statistics; full run results are
+stored too while they fit the storage budget, and oversized runs degrade
+to settings-only entries that reproduce their results on re-run through
+the recorded seed.
 
 Use **Restore** on an entry to bring a recorded run back into the
 workbench, **Save session** to download the history as a JSON file, and

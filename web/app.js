@@ -273,7 +273,8 @@ const editors = {
 };
 let lastShortcutFocus = null;
 let lastPrivacyFocus = null;
-const sessionStore = createSessionStore({ storage: sessionStorageAdapter() });
+const sessionPersistence = sessionStorageAdapter();
+const sessionStore = createSessionStore({ storage: sessionPersistence.storage });
 
 els.editor.value = sampleTopology;
 clearMap(emptyCopy.map);
@@ -1320,9 +1321,9 @@ function sessionStorageAdapter() {
   try {
     const storage = window.localStorage;
     storage.getItem(sessionStorageKey);
-    return storage;
+    return { storage, durable: true };
   } catch {
-    return memorySessionStorage();
+    return { storage: memorySessionStorage(), durable: false };
   }
 }
 
@@ -1347,8 +1348,9 @@ function recordSessionEntry(source, result) {
     return;
   }
   const outcome = sessionStore.record(entry);
+  const persisted = outcome.persisted && sessionPersistence.durable;
   renderHistory();
-  if (outcome.persisted) {
+  if (persisted) {
     setHistoryStatus("", "");
   } else {
     setHistoryStatus("History kept in memory only; browser storage is unavailable or full.", "bad");
@@ -1357,7 +1359,7 @@ function recordSessionEntry(source, result) {
   trackEvent(telemetryEventNames.sessionEntryRecorded, {
     entries: outcome.entries.length,
     result_stored: Boolean(recorded?.result),
-    persisted: outcome.persisted,
+    persisted,
   });
 }
 
@@ -1468,7 +1470,7 @@ async function loadSessionFile() {
     trackEvent(telemetryEventNames.sessionLoaded, {
       entries: outcome.entries.length,
       size_bucket: bucketBytes(file.size),
-      persisted: outcome.persisted,
+      persisted: outcome.persisted && sessionPersistence.durable,
     });
     setHistoryStatus(`Loaded ${file.name}: ${outcome.entries.length} runs`, "good");
   } catch (error) {
@@ -1476,7 +1478,7 @@ async function loadSessionFile() {
       size_bucket: bucketBytes(file.size),
       error_category: categorizeError(error),
     });
-    setHistoryStatus(`Could not load session: ${error.message}`, "bad");
+    setHistoryStatus(`Could not load session: ${error?.message || "unknown error"}`, "bad");
   } finally {
     els.history.file.value = "";
   }
