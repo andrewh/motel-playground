@@ -375,6 +375,23 @@ try {
   ) {
     throw new Error(`trace import controls have unexpected defaults: ${JSON.stringify(traceImportDefaults)}`);
   }
+  const collapsedTraceInput = await evaluate(client, `(${traceInputToggleState})()`);
+  if (!collapsedTraceInput.hidden || collapsedTraceInput.expanded !== "false") {
+    throw new Error(`trace input was not collapsed by default: ${JSON.stringify(collapsedTraceInput)}`);
+  }
+  await evaluate(client, `document.querySelector("#trace-input-toggle").click()`);
+  const expandedTraceInput = await waitFor(async () => {
+    const state = await evaluate(client, `(${traceInputToggleState})()`);
+    return !state.hidden && state.expanded === "true" ? state : false;
+  }, "trace input expanded on toggle");
+  await evaluate(client, `document.querySelector("#trace-input-toggle").click()`);
+  const recollapsedTraceInput = await waitFor(async () => {
+    const state = await evaluate(client, `(${traceInputToggleState})()`);
+    return state.hidden && state.expanded === "false" ? state : false;
+  }, "trace input recollapsed on toggle");
+  if (!recollapsedTraceInput.hidden) {
+    throw new Error(`trace input did not collapse again: ${JSON.stringify({ expandedTraceInput, recollapsedTraceInput })}`);
+  }
   const traceDropHighlight = await startFileDrag(client, ".trace-import-panel", traceFixture, "trace.json");
   if (!traceDropHighlight.enter.defaultPrevented || !traceDropHighlight.over.over) {
     throw new Error(`trace drop target did not highlight for file drag: ${JSON.stringify(traceDropHighlight)}`);
@@ -769,6 +786,49 @@ try {
   }
   await evaluate(client, `document.querySelector("#log-severity-filter").click()`);
 
+  await evaluate(client, `document.querySelector("[data-view='history']").click()`);
+  const historyState = await waitFor(async () => {
+    const state = await evaluate(client, `(${sessionHistoryState})()`);
+    return state.rows >= 2 && !state.saveDisabled && !state.clearDisabled ? state : false;
+  }, "session history entries recorded");
+  if (!historyState.storedSession.includes("motel-playground-session") || !historyState.countText.includes("runs")) {
+    throw new Error(`session history was not persisted to browser storage: ${JSON.stringify({
+      rows: historyState.rows,
+      countText: historyState.countText,
+      stored: historyState.storedSession.slice(0, 120),
+    })}`);
+  }
+  await evaluate(client, `document.querySelector("#history-list [data-history-action='restore']").click()`);
+  const restoredEntry = await waitFor(async () => {
+    const state = await evaluate(client, `(${sessionRestoreState})()`);
+    return state.restored && state.spans > 0 && state.topologyRestored ? state : false;
+  }, "session entry restored");
+  if (!restoredEntry.status.includes("Restored run")) {
+    throw new Error(`session restore did not report status: ${JSON.stringify(restoredEntry)}`);
+  }
+  if (restoredEntry.activeView === "history") {
+    throw new Error(`session restore left the user on the history tab: ${JSON.stringify(restoredEntry)}`);
+  }
+
+  await client.send("Page.navigate", { url: appURL });
+  await waitFor(async () => evaluate(client, `document.querySelector("#runtime-status")?.textContent === "Runtime ready"`), "runtime ready after session reload");
+  await evaluate(client, `document.querySelector("[data-view='history']").click()`);
+  const reloadedHistory = await waitFor(async () => {
+    const state = await evaluate(client, `(${sessionHistoryState})()`);
+    return state.rows === historyState.rows ? state : false;
+  }, "session history restored after reload");
+  if (reloadedHistory.saveDisabled || reloadedHistory.clearDisabled) {
+    throw new Error(`reloaded session history left actions disabled: ${JSON.stringify(reloadedHistory)}`);
+  }
+  await evaluate(client, `document.querySelector("#clear-session-button").click()`);
+  const clearedHistory = await waitFor(async () => {
+    const state = await evaluate(client, `(${sessionHistoryState})()`);
+    return state.rows === 0 && state.saveDisabled && state.clearDisabled ? state : false;
+  }, "session history cleared");
+  if (clearedHistory.storedSession) {
+    throw new Error(`session clear left data in browser storage: ${clearedHistory.storedSession.slice(0, 120)}`);
+  }
+
   await setEditorValue(client, invalidTopology);
   await evaluate(client, `document.querySelector("#validate-button").click()`);
   await waitFor(async () => {
@@ -1036,7 +1096,7 @@ async function generateDifferentTopology(client, previousValue) {
 }
 
 function resultTabA11yState() {
-  const expectedTabCount = 6;
+  const expectedTabCount = 7;
   const tabs = Array.from(document.querySelectorAll(".tabs [role='tab']"));
   const panels = Array.from(document.querySelectorAll(".view[role='tabpanel']"));
   const selectedTabs = tabs.filter((tab) => tab.getAttribute("aria-selected") === "true");
@@ -1484,6 +1544,46 @@ function assertReportPDF(label, pdf) {
   if (!pdf?.data || pdf.data.length < minReportPDFBase64Length) {
     throw new Error(`${label} report PDF was too small: ${pdf?.data?.length ?? 0}`);
   }
+}
+
+function sessionHistoryState() {
+  const rows = Array.from(document.querySelectorAll("#history-list .history-item"));
+  let storedSession = "";
+  try {
+    storedSession = window.localStorage.getItem("motel-playground-session-v1") ?? "";
+  } catch {
+  }
+  return {
+    rows: rows.length,
+    firstLabel: rows[0]?.querySelector("strong")?.textContent ?? "",
+    firstNote: rows[0]?.querySelector(".history-badge")?.textContent ?? "",
+    countText: document.querySelector("#history-count")?.textContent ?? "",
+    status: document.querySelector("#history-status")?.textContent ?? "",
+    saveDisabled: document.querySelector("#save-session-button")?.disabled ?? true,
+    clearDisabled: document.querySelector("#clear-session-button")?.disabled ?? true,
+    storedSession,
+  };
+}
+
+function sessionRestoreState() {
+  const summary = document.querySelector("#summary-line")?.textContent ?? "";
+  return {
+    restored: summary.includes("Restored run"),
+    spans: Number(document.querySelector("#metric-spans")?.textContent ?? "0"),
+    topologyRestored: (window.motelPlayground?.getTopology() ?? "").includes("GET /error"),
+    activeView: document.querySelector(".tab.active")?.dataset.view,
+    summary,
+    status: document.querySelector("#history-status")?.textContent ?? "",
+  };
+}
+
+function traceInputToggleState() {
+  const region = document.querySelector("#trace-input-region");
+  const toggle = document.querySelector("#trace-input-toggle");
+  return {
+    hidden: region.hidden,
+    expanded: toggle.getAttribute("aria-expanded"),
+  };
 }
 
 function invalidValidationState() {

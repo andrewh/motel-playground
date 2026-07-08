@@ -92,10 +92,16 @@
                 </div>
               </div>
             </div>
-            <label class="trace-input-field">
-              Trace input (max 5 MB)
-              <textarea id="trace-input" class="trace-input" spellcheck="false" placeholder="OTLP JSON or stdouttrace JSONL"></textarea>
-            </label>
+            <div class="trace-input-collapsible">
+              <button id="trace-input-toggle" class="trace-input-toggle" type="button" aria-expanded="false" aria-controls="trace-input-region">
+                <span class="disclosure" aria-hidden="true"></span>
+                Trace input (max 5 MB)
+              </button>
+              <label class="trace-input-field" id="trace-input-region" hidden>
+                <span class="sr-only">Trace input (max 5 MB)</span>
+                <textarea id="trace-input" class="trace-input" spellcheck="false" placeholder="OTLP JSON or stdouttrace JSONL"></textarea>
+              </label>
+            </div>
           </section>
           <textarea id="editor" spellcheck="false" aria-label="Topology YAML"></textarea>
         </div>
@@ -169,6 +175,7 @@
             <button id="tab-logs" class="tab" data-view="logs" type="button" role="tab" aria-selected="false" aria-controls="view-logs" aria-keyshortcuts="4" tabindex="-1">Logs</button>
             <button id="tab-map" class="tab" data-view="map" type="button" role="tab" aria-selected="false" aria-controls="view-map" aria-keyshortcuts="5" tabindex="-1">Map</button>
             <button id="tab-raw" class="tab" data-view="raw" type="button" role="tab" aria-selected="false" aria-controls="view-raw" aria-keyshortcuts="6" tabindex="-1">Raw</button>
+            <button id="tab-history" class="tab" data-view="history" type="button" role="tab" aria-selected="false" aria-controls="view-history" aria-keyshortcuts="7" tabindex="-1">History</button>
           </div>
 
           <section class="view active" id="view-preview" role="tabpanel" aria-labelledby="tab-preview" tabindex="0">
@@ -198,6 +205,19 @@
           <section class="view" id="view-raw" role="tabpanel" aria-labelledby="tab-raw" tabindex="0" hidden>
             <div id="raw-output" class="raw-output"></div>
           </section>
+          <section class="view" id="view-history" role="tabpanel" aria-labelledby="tab-history" tabindex="0" hidden>
+            <div class="span-toolbar history-toolbar">
+              <span id="history-count">0 runs</span>
+              <span id="history-status" class="history-status" role="status" aria-live="polite"></span>
+              <div class="history-session-actions">
+                <input id="session-file" class="file-input" type="file" accept=".json,application/json" />
+                <button id="load-session-button" type="button">Load session</button>
+                <button id="save-session-button" type="button" disabled>Save session</button>
+                <button id="clear-session-button" type="button" disabled>Clear</button>
+              </div>
+            </div>
+            <div id="history-list" class="history-list"></div>
+          </section>
         </div>
       </section>
     </main>
@@ -223,7 +243,8 @@
         </header>
         <div class="privacy-copy">
           <p>The hosted playground may use Google Analytics and configured OpenTelemetry export to understand product usage, startup and run timing, rendering latency, and broad error categories.</p>
-          <p>Telemetry does not send topology YAML, raw JSON output, imported trace payloads, generated results, filenames, share links, URL hashes, or other user-authored content.</p>
+          <p>Telemetry does not send topology YAML, raw JSON output, imported trace payloads, generated results, session history contents, filenames, share links, URL hashes, or other user-authored content.</p>
+          <p>Session history never leaves the browser except through session files you save explicitly. It is kept in this browser's local storage when available, and otherwise in memory for the current tab only.</p>
           <p>Local development and unconfigured deployments no-op. Event parameters are limited to aggregate counts, settings, size buckets, tab names, durations, and coarse categories.</p>
         </div>
       </section>
@@ -255,7 +276,7 @@
           <div><dt><kbd>Cmd/Ctrl</kbd><kbd>S</kbd></dt><dd>Save topology YAML</dd></div>
           <div><dt><kbd>Cmd/Ctrl</kbd><kbd>O</kbd></dt><dd>Load topology YAML</dd></div>
           <div><dt><kbd>Cmd/Ctrl</kbd><kbd>K</kbd><span>or</span><kbd>/</kbd></dt><dd>Focus output filter</dd></div>
-          <div><dt><kbd>1</kbd><span>to</span><kbd>6</kbd></dt><dd>Switch result tabs</dd></div>
+          <div><dt><kbd>1</kbd><span>to</span><kbd>7</kbd></dt><dd>Switch result tabs</dd></div>
         </dl>
       </section>
     </div>

@@ -31,6 +31,13 @@ export const telemetryEventNames = Object.freeze({
   resultImported: "result_imported",
   resultImportFailed: "result_import_failed",
   reportPrinted: "report_printed",
+  sessionEntryRecorded: "session_entry_recorded",
+  sessionEntryRestored: "session_entry_restored",
+  sessionEntryDeleted: "session_entry_deleted",
+  sessionSaved: "session_saved",
+  sessionLoaded: "session_loaded",
+  sessionLoadFailed: "session_load_failed",
+  sessionCleared: "session_cleared",
   otelInitFailed: "otel_init_failed",
 });
 
