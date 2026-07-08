@@ -92,10 +92,16 @@
                 </div>
               </div>
             </div>
-            <label class="trace-input-field">
-              Trace input (max 5 MB)
-              <textarea id="trace-input" class="trace-input" spellcheck="false" placeholder="OTLP JSON or stdouttrace JSONL"></textarea>
-            </label>
+            <div class="trace-input-collapsible">
+              <button id="trace-input-toggle" class="trace-input-toggle" type="button" aria-expanded="false" aria-controls="trace-input-region">
+                <span class="disclosure" aria-hidden="true"></span>
+                Trace input (max 5 MB)
+              </button>
+              <label class="trace-input-field" id="trace-input-region" hidden>
+                <span class="sr-only">Trace input (max 5 MB)</span>
+                <textarea id="trace-input" class="trace-input" spellcheck="false" placeholder="OTLP JSON or stdouttrace JSONL"></textarea>
+              </label>
+            </div>
           </section>
           <textarea id="editor" spellcheck="false" aria-label="Topology YAML"></textarea>
         </div>

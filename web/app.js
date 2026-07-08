@@ -191,6 +191,8 @@ const els = {
   traceDropZone: document.querySelector(".trace-import-panel"),
   traceFile: document.querySelector("#trace-file"),
   traceInput: document.querySelector("#trace-input"),
+  traceInputToggle: document.querySelector("#trace-input-toggle"),
+  traceInputRegion: document.querySelector("#trace-input-region"),
   traceFormat: document.querySelector("#trace-format"),
   loadTraces: document.querySelector("#load-traces-button"),
   importTraces: document.querySelector("#import-traces-button"),
@@ -337,6 +339,7 @@ els.run.addEventListener("click", () => run());
 els.generate.addEventListener("click", () => generateTopology());
 els.load.addEventListener("click", () => els.file.click());
 els.loadTraces.addEventListener("click", () => els.traceFile.click());
+els.traceInputToggle.addEventListener("click", () => toggleTraceInput());
 els.save.addEventListener("click", () => saveTopology());
 els.share.addEventListener("click", () => {
   void copyShareURL();
@@ -847,6 +850,15 @@ function setShareStatus(message, kind) {
   }
 }
 
+function toggleTraceInput(force) {
+  const expanded = typeof force === "boolean" ? force : els.traceInputToggle.getAttribute("aria-expanded") !== "true";
+  els.traceInputToggle.setAttribute("aria-expanded", String(expanded));
+  els.traceInputRegion.hidden = !expanded;
+  if (expanded) {
+    els.traceInput.focus({ preventScroll: true });
+  }
+}
+
 function setTraceImportStatus(message, kind) {
   els.traceImportStatus.textContent = message;
   els.traceImportStatus.classList.remove("good", "bad");
@@ -1114,6 +1126,7 @@ async function loadTraceFile(sourceFile) {
       return;
     }
     els.traceInput.value = await file.text();
+    toggleTraceInput(true);
     trackEvent(telemetryEventNames.traceFileLoaded, {
       format: els.traceFormat.value,
       size_bucket: bucketBytes(file.size),
@@ -1394,11 +1407,17 @@ function renderHistoryEntry(entry) {
     `${stats.spans} spans`,
     `${stats.errors} errors`,
   ].join(" · ");
+  const stored = Boolean(entry.result);
+  const badge = stored
+    ? `<span class="history-badge">results stored</span>`
+    : `<span class="history-badge muted">settings only</span>`;
   return `<article class="history-item ${stats.errors > 0 ? "errored" : ""}">
     <div class="history-meta">
-      <strong>${escapeHtml(entry.label)}</strong>
-      <span>${escapeHtml(detail)}</span>
-      <span class="history-note">${entry.result ? "results stored" : "settings only"}</span>
+      <div class="history-head">
+        <strong>${escapeHtml(entry.label)}</strong>
+        ${badge}
+      </div>
+      <span class="history-detail">${escapeHtml(detail)}</span>
     </div>
     <div class="history-entry-actions">
       <button type="button" data-history-action="restore" data-history-id="${escapeHtml(entry.id)}">Restore</button>
@@ -1430,6 +1449,7 @@ async function restoreHistoryEntry(entry) {
     const stats = snapshot.result.stats;
     els.summary.textContent = `Restored run: ${stats.traces} traces, ${stats.spans} spans, ${stats.errors} errors`;
     setHistoryStatus(`Restored run from ${historyTime(entry.recorded_at)}`, "good");
+    activateResultView(restoredResultView(snapshot.result));
     return;
   }
   setTopologyValue(entry.topology);
@@ -1445,6 +1465,15 @@ async function restoreHistoryEntry(entry) {
   els.summary.textContent = "Restored topology and settings from history";
   setHistoryStatus(`Restored settings from ${historyTime(entry.recorded_at)}; run to regenerate results.`, "good");
   if (state.ready) await validate({ passive: true });
+  activateResultView("preview");
+}
+
+// Restore lands on the view that best shows the recorded run: spans when the
+// run captured any, otherwise the traffic preview.
+function restoredResultView(result) {
+  const signals = normalizeSignalSettings(result.signals);
+  if (signals.traces && (result.spans ?? []).length > 0) return "traces";
+  return "preview";
 }
 
 function saveSession() {

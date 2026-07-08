@@ -375,6 +375,23 @@ try {
   ) {
     throw new Error(`trace import controls have unexpected defaults: ${JSON.stringify(traceImportDefaults)}`);
   }
+  const collapsedTraceInput = await evaluate(client, `(${traceInputToggleState})()`);
+  if (!collapsedTraceInput.hidden || collapsedTraceInput.expanded !== "false") {
+    throw new Error(`trace input was not collapsed by default: ${JSON.stringify(collapsedTraceInput)}`);
+  }
+  await evaluate(client, `document.querySelector("#trace-input-toggle").click()`);
+  const expandedTraceInput = await waitFor(async () => {
+    const state = await evaluate(client, `(${traceInputToggleState})()`);
+    return !state.hidden && state.expanded === "true" ? state : false;
+  }, "trace input expanded on toggle");
+  await evaluate(client, `document.querySelector("#trace-input-toggle").click()`);
+  const recollapsedTraceInput = await waitFor(async () => {
+    const state = await evaluate(client, `(${traceInputToggleState})()`);
+    return state.hidden && state.expanded === "false" ? state : false;
+  }, "trace input recollapsed on toggle");
+  if (!recollapsedTraceInput.hidden) {
+    throw new Error(`trace input did not collapse again: ${JSON.stringify({ expandedTraceInput, recollapsedTraceInput })}`);
+  }
   const traceDropHighlight = await startFileDrag(client, ".trace-import-panel", traceFixture, "trace.json");
   if (!traceDropHighlight.enter.defaultPrevented || !traceDropHighlight.over.over) {
     throw new Error(`trace drop target did not highlight for file drag: ${JSON.stringify(traceDropHighlight)}`);
@@ -788,6 +805,9 @@ try {
   }, "session entry restored");
   if (!restoredEntry.status.includes("Restored run")) {
     throw new Error(`session restore did not report status: ${JSON.stringify(restoredEntry)}`);
+  }
+  if (restoredEntry.activeView === "history") {
+    throw new Error(`session restore left the user on the history tab: ${JSON.stringify(restoredEntry)}`);
   }
 
   await client.send("Page.navigate", { url: appURL });
@@ -1536,7 +1556,7 @@ function sessionHistoryState() {
   return {
     rows: rows.length,
     firstLabel: rows[0]?.querySelector("strong")?.textContent ?? "",
-    firstNote: rows[0]?.querySelector(".history-note")?.textContent ?? "",
+    firstNote: rows[0]?.querySelector(".history-badge")?.textContent ?? "",
     countText: document.querySelector("#history-count")?.textContent ?? "",
     status: document.querySelector("#history-status")?.textContent ?? "",
     saveDisabled: document.querySelector("#save-session-button")?.disabled ?? true,
@@ -1551,8 +1571,18 @@ function sessionRestoreState() {
     restored: summary.includes("Restored run"),
     spans: Number(document.querySelector("#metric-spans")?.textContent ?? "0"),
     topologyRestored: (window.motelPlayground?.getTopology() ?? "").includes("GET /error"),
+    activeView: document.querySelector(".tab.active")?.dataset.view,
     summary,
     status: document.querySelector("#history-status")?.textContent ?? "",
+  };
+}
+
+function traceInputToggleState() {
+  const region = document.querySelector("#trace-input-region");
+  const toggle = document.querySelector("#trace-input-toggle");
+  return {
+    hidden: region.hidden,
+    expanded: toggle.getAttribute("aria-expanded"),
   };
 }
 
