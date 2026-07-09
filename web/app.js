@@ -195,6 +195,8 @@ const els = {
   exportResults: document.querySelector("#export-results-button"),
   printReport: document.querySelector("#print-report-button"),
   generate: document.querySelector("#generate-button"),
+  generateTraces: document.querySelector("#generate-traces-button"),
+  generateCount: document.querySelector("#generate-count"),
   validate: document.querySelector("#validate-button"),
   run: document.querySelector("#run-button"),
   duration: document.querySelector("#duration"),
@@ -322,6 +324,9 @@ els.importTraces.addEventListener("click", () => {
 });
 els.replayTraces.addEventListener("click", () => {
   void replayTraces();
+});
+els.generateTraces.addEventListener("click", () => {
+  void generateTraces();
 });
 els.importResults.addEventListener("click", () => els.resultFile.click());
 els.exportResults.addEventListener("click", () => exportResults());
@@ -1278,6 +1283,53 @@ function currentReplayOptions() {
     verbatim: els.replayVerbatim.checked,
     preserveIds: els.replayPreserveIds.checked,
   };
+}
+
+// generateTraces emits a fixed number of traces from the editor topology,
+// deterministically for the current seed, and renders them like a run. Unlike
+// Run it is count-based rather than duration/traffic-paced, and trace-only.
+async function generateTraces() {
+  if (!state.ready || state.runtimeBusy) return;
+  const topology = getTopologyValue();
+  const settings = currentRunSettings();
+  const traces = currentGenerateCount();
+  const seed = Number(els.seed.value);
+  const telemetryParams = { ...runTelemetryParams(settings), traces };
+
+  setRuntimeBusy(true, "Generating traces");
+  trackEvent(telemetryEventNames.generateStarted, telemetryParams);
+  try {
+    const result = JSON.parse(await traceAsync(
+      telemetrySpanNames.topologyGenerate,
+      () => window.motelGenerate(topology, traces, seed),
+      telemetryParams,
+    ));
+    renderRun(result, { topology, settings });
+    renderRawJson(result);
+    if (!result.ok) {
+      trackEvent(telemetryEventNames.generateFailed, {
+        ...telemetryParams,
+        error_category: "engine",
+      });
+      return;
+    }
+    trackEvent(telemetryEventNames.generateCompleted, {
+      ...telemetryParams,
+      ...runStatsTelemetryParams(result),
+    });
+  } catch (error) {
+    trackEvent(telemetryEventNames.generateFailed, {
+      ...telemetryParams,
+      error_category: categorizeError(error),
+    });
+    renderRunWorkerError(error);
+  } finally {
+    setRuntimeBusy(false);
+  }
+}
+
+function currentGenerateCount() {
+  return Math.max(1, Math.min(200, Math.floor(Number(els.generateCount.value) || 1)));
 }
 
 function traceReplaySummary(result) {
@@ -2515,6 +2567,7 @@ function syncControls(label) {
   els.loadTraces.disabled = state.runtimeBusy || !state.ready;
   els.importTraces.disabled = state.runtimeBusy || !state.ready;
   els.replayTraces.disabled = state.runtimeBusy || !state.ready;
+  els.generateTraces.disabled = state.runtimeBusy || !state.ready;
   els.importResults.disabled = state.runtimeBusy || !state.ready;
   els.exportResults.disabled = state.runtimeBusy || !state.lastRun;
   els.printReport.disabled = state.runtimeBusy || !state.lastRun;

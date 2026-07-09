@@ -12,11 +12,14 @@ from one-shot runs into a live observability workbench.
 
 ## Current Scope
 
-- Go WASM bridge exposing `Validate`, `Run`, `Preview`, trace import, and trace
-  replay functions.
+- Go WASM bridge exposing `Validate`, `Run`, `Generate`, `Preview`, trace
+  import, and trace replay functions.
 - Static frontend with a topology YAML editor, validation, bounded run controls,
   local YAML load/save, random topology generation, traffic preview SVG, span
   waterfall, service map, and raw JSON output.
+- **Generate traces** emits a fixed number of traces from the topology,
+  deterministically for the current seed, and renders them in the waterfall —
+  count-based and trace-only, unlike the duration- and traffic-paced `Run`.
 - Trace import infers a topology from pasted OTLP/stdouttrace data; **Replay
   traces** re-emits those exact traces (shape, timing, attributes, errors) into
   the waterfall and service map instead of sampling the inferred model, with

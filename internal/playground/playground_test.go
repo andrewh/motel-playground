@@ -685,6 +685,108 @@ func TestRunSlowThreshold(t *testing.T) {
 	}
 }
 
+const testGenerateTopology = `version: 1
+services:
+  gateway:
+    operations:
+      GET /checkout:
+        duration: 5ms +/- 1ms
+        calls:
+          - backend.query
+  backend:
+    operations:
+      query:
+        duration: 3ms +/- 1ms
+traffic:
+  rate: 10/s
+`
+
+// spanShape is the seed-deterministic part of a generated span. Trace/span IDs
+// and absolute timestamps vary run to run (random IDs, wall-clock starts), so
+// determinism is asserted over structure, not identity.
+func spanShape(spans []SpanRecord) []string {
+	shapes := make([]string, len(spans))
+	for i, s := range spans {
+		shapes[i] = strings.Join([]string{
+			s.Service, s.Operation, s.Kind, s.ParentService, s.ParentOperation,
+		}, "|")
+	}
+	return shapes
+}
+
+func TestGenerateProducesTraces(t *testing.T) {
+	const traces = 5
+	result := Generate(testGenerateTopology, traces, 42)
+	if !result.OK {
+		t.Fatalf("Generate() failed: %#v", result.Errors)
+	}
+	if result.Stats == nil || result.Stats.Traces != traces {
+		t.Fatalf("Generate() stats = %#v, want %d traces", result.Stats, traces)
+	}
+	if len(result.Spans) == 0 {
+		t.Fatalf("Generate() captured no spans")
+	}
+	// Generate is trace-only: no metrics or logs, and the service map is still
+	// summarised from the topology.
+	if !result.Signals.Traces || result.Signals.Metrics || result.Signals.Logs {
+		t.Fatalf("Generate() signals = %#v, want traces only", result.Signals)
+	}
+	if len(result.Metrics) != 0 || len(result.Logs) != 0 {
+		t.Fatalf("Generate() produced metrics=%d logs=%d, want none", len(result.Metrics), len(result.Logs))
+	}
+	if result.Topology == nil || len(result.Topology.Services) == 0 {
+		t.Fatalf("Generate() topology summary missing: %#v", result.Topology)
+	}
+
+	// Every trace roots at gateway's GET /checkout, which calls backend.query, so
+	// a backend span must resolve its parent back to the gateway operation.
+	services := map[string]bool{}
+	var linked bool
+	for _, span := range result.Spans {
+		services[span.Service] = true
+		if span.Service == "backend" && span.ParentService == "gateway" && span.ParentOperation == "GET /checkout" {
+			linked = true
+		}
+	}
+	if !services["gateway"] || !services["backend"] {
+		t.Fatalf("Generate() spans missing expected services: %#v", services)
+	}
+	if !linked {
+		t.Fatalf("Generate() did not resolve a backend span's parent to the gateway root: %#v", result.Spans)
+	}
+}
+
+func TestGenerateDeterministicForSeed(t *testing.T) {
+	first := Generate(testGenerateTopology, 4, 7)
+	second := Generate(testGenerateTopology, 4, 7)
+	if !first.OK || !second.OK {
+		t.Fatalf("Generate() failed: %#v / %#v", first.Errors, second.Errors)
+	}
+	firstShape := spanShape(first.Spans)
+	secondShape := spanShape(second.Spans)
+	if len(firstShape) != len(secondShape) {
+		t.Fatalf("Generate() span count differs across runs: %d vs %d", len(firstShape), len(secondShape))
+	}
+	for i := range firstShape {
+		if firstShape[i] != secondShape[i] {
+			t.Fatalf("Generate() span %d differs across same-seed runs: %q vs %q", i, firstShape[i], secondShape[i])
+		}
+	}
+}
+
+func TestGenerateBoundsTraceCount(t *testing.T) {
+	// A non-positive count still generates a single trace.
+	one := Generate(testGenerateTopology, 0, 1)
+	if !one.OK || one.Stats == nil || one.Stats.Traces != 1 {
+		t.Fatalf("Generate(0) stats = %#v, want 1 trace", one.Stats)
+	}
+	// An over-large count is capped at maxGeneratedTraces.
+	capped := Generate(testGenerateTopology, maxGeneratedTraces+50, 1)
+	if !capped.OK || capped.Stats == nil || capped.Stats.Traces != maxGeneratedTraces {
+		t.Fatalf("Generate(over cap) stats = %#v, want %d traces", capped.Stats, maxGeneratedTraces)
+	}
+}
+
 const testSignalTopology = `version: 1
 services:
   gateway:

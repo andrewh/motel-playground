@@ -29,6 +29,11 @@ func main() {
 		slowThreshold := millisecondsArg(args, 4, 0)
 		return playground.ToJSON(playground.Run(args[0].String(), duration, seed, signals, slowThreshold)), nil
 	}))
+	js.Global().Set("motelGenerate", async(func(args []js.Value) (string, error) {
+		traces := numberArg(args, 1, 1)
+		seed := uint64(numberArg(args, 2, 1))
+		return playground.ToJSON(playground.Generate(args[0].String(), traces, seed)), nil
+	}))
 	js.Global().Set("motelPreview", async(func(args []js.Value) (string, error) {
 		duration := secondsArg(args, 1, 300)
 		return playground.Preview(args[0].String(), duration)
