@@ -201,6 +201,39 @@ if (!slowEnabledRun.ok || !slowEnabledRun.logs?.some((log) => log.body.includes(
   throw new Error(`slow threshold did not emit slow logs: ${JSON.stringify(slowEnabledRun)}`);
 }
 
+const generated = JSON.parse(await globalThis.motelGenerate(topology, 5, 7));
+if (
+  !generated.ok
+  || generated.stats?.traces !== 5
+  || !(generated.spans?.length > 0)
+  || !generated.topology?.graph
+  || generated.signals?.traces !== true
+  || generated.signals?.metrics !== false
+  || generated.signals?.logs !== false
+  || generated.metrics?.length
+  || generated.logs?.length
+) {
+  throw new Error(`generate did not emit trace-only results: ${JSON.stringify(generated)}`);
+}
+if (!generated.spans.some((span) => span.service === "worker" && span.parent_service === "gateway" && span.parent_operation === "GET /")) {
+  throw new Error(`generate did not resolve worker span parents to the gateway root: ${JSON.stringify(generated.spans)}`);
+}
+
+const generateShape = (result) => result.spans.map((span) => `${span.service}|${span.operation}|${span.kind}|${span.parent_service}|${span.parent_operation}`).join(",");
+const generateAgain = JSON.parse(await globalThis.motelGenerate(topology, 5, 7));
+if (!generateAgain.ok || generateShape(generateAgain) !== generateShape(generated)) {
+  throw new Error(`generate was not deterministic for a fixed seed: ${generateShape(generated)} vs ${generateShape(generateAgain)}`);
+}
+
+const generateFloor = JSON.parse(await globalThis.motelGenerate(topology, 0, 1));
+if (!generateFloor.ok || generateFloor.stats?.traces !== 1) {
+  throw new Error(`generate with a non-positive count should emit one trace: ${JSON.stringify(generateFloor)}`);
+}
+const generateCap = JSON.parse(await globalThis.motelGenerate(topology, 500, 1));
+if (!generateCap.ok || generateCap.stats?.traces !== 200) {
+  throw new Error(`generate should cap the trace count at 200: ${JSON.stringify(generateCap)}`);
+}
+
 for (const seed of [1, 42, 777, 2026]) {
   const generated = randomTopologyYaml(seed);
   if (

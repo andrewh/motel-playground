@@ -487,6 +487,22 @@ try {
   if (!slowLogRun.text.includes("WARN")) {
     throw new Error(`slow-threshold log did not expose warn severity: ${JSON.stringify(slowLogRun)}`);
   }
+
+  // Generate mode: count-based, deterministic emission rendered in the waterfall.
+  await setEditorValue(client, sampleTopology);
+  await setResultFilter(client, "");
+  await evaluate(client, `document.querySelector("#generate-count").value = "5"`);
+  await evaluate(client, `document.querySelector("#seed").value = "7"`);
+  await evaluate(client, `document.querySelector("[data-view='traces']").click()`);
+  await evaluate(client, `document.querySelector("#generate-traces-button").click()`);
+  const generateRun = await waitFor(async () => {
+    const state = await evaluate(client, `(${generateTraceState})()`);
+    return state.traceGroups === 5 && state.spans >= 5 ? state : false;
+  }, "generate rendered five traces in the waterfall");
+  if (generateRun.metricRows || generateRun.logRows) {
+    throw new Error(`generate emitted metrics or logs: ${JSON.stringify(generateRun)}`);
+  }
+
   await setEditorValue(client, sampleTopology);
   await evaluate(client, `document.querySelector("#slow-threshold").value = "0"`);
   await evaluate(client, `(() => {
@@ -1422,6 +1438,15 @@ function traceFilterState() {
     active: document.querySelector("#error-filter").getAttribute("aria-pressed") === "true",
     disabled: document.querySelector("#error-filter").disabled,
     count: document.querySelector("#span-filter-count").textContent,
+  };
+}
+
+function generateTraceState() {
+  return {
+    traceGroups: document.querySelectorAll("#traces .trace-group").length,
+    spans: Number(document.querySelector("#metric-spans").textContent) || 0,
+    metricRows: document.querySelectorAll("#signal-metrics .signal-item").length,
+    logRows: document.querySelectorAll("#signal-logs .signal-item").length,
   };
 }
 

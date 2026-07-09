@@ -146,6 +146,13 @@
                   <span>ms</span>
                 </span>
               </label>
+              <div class="generate-field">
+                <span class="field-label" id="generate-field-label">Generate (deterministic, uses seed)</span>
+                <span class="generate-input">
+                  <input id="generate-count" type="number" min="1" max="200" step="1" value="5" aria-label="Number of traces to generate" />
+                  <button id="generate-traces-button" type="button" aria-describedby="generate-field-label">traces</button>
+                </span>
+              </div>
               <label class="filter-field">
                 Filter output
                 <input id="result-filter" type="search" autocomplete="off" placeholder="service, attribute, trace" aria-keyshortcuts="Meta+K Control+K /" />
