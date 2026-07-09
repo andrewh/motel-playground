@@ -16,7 +16,6 @@ import (
 	"github.com/andrewh/motel/pkg/synth"
 	"github.com/andrewh/motel/pkg/synth/traceimport"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/metric"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -347,73 +346,6 @@ func (o *captureObserver) Records() []SpanRecord {
 	return append([]SpanRecord(nil), o.spans...)
 }
 
-// spanCapture is an in-memory SpanExporter for the generate path. Run and
-// ImportReplay capture through motel's SpanObserver, but synth.GenerateTraces
-// emits only through a TracerProvider, so we collect the SDK spans here and turn
-// them into SpanRecords once generation finishes.
-type spanCapture struct {
-	mu    sync.Mutex
-	spans []sdktrace.ReadOnlySpan
-}
-
-func (c *spanCapture) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlySpan) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.spans = append(c.spans, spans...)
-	return nil
-}
-
-func (c *spanCapture) Shutdown(context.Context) error { return nil }
-
-// records converts the captured spans into SpanRecords, resolving each span's
-// parent service/operation from its sibling spans. Export order is preserved:
-// generation is sequential per trace, so the syncer already groups each trace's
-// spans together in a stable, seed-deterministic order. The result is bounded at
-// maxCapturedSpans.
-func (c *spanCapture) records() []SpanRecord {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Index every span by ID first so a child (exported before its parent) can
-	// still resolve the parent's service and operation.
-	type ident struct{ service, operation string }
-	byID := make(map[trace.SpanID]ident, len(c.spans))
-	for _, span := range c.spans {
-		byID[span.SpanContext().SpanID()] = ident{
-			service:   span.InstrumentationScope().Name,
-			operation: span.Name(),
-		}
-	}
-
-	out := make([]SpanRecord, 0, len(c.spans))
-	for _, span := range c.spans {
-		if len(out) >= maxCapturedSpans {
-			break
-		}
-		var parentService, parentOperation string
-		if parent := span.Parent(); parent.IsValid() {
-			if p, ok := byID[parent.SpanID()]; ok {
-				parentService = p.service
-				parentOperation = p.operation
-			}
-		}
-		out = append(out, SpanRecord{
-			TraceID:         span.SpanContext().TraceID().String(),
-			SpanID:          span.SpanContext().SpanID().String(),
-			Service:         span.InstrumentationScope().Name,
-			Operation:       span.Name(),
-			ParentService:   parentService,
-			ParentOperation: parentOperation,
-			TimestampMs:     span.StartTime().UnixMilli(),
-			DurationMs:      float64(span.EndTime().Sub(span.StartTime()).Microseconds()) / 1000,
-			IsError:         span.Status().Code == codes.Error,
-			Kind:            spanKind(span.SpanKind()),
-			Attributes:      attributes(span.Attributes()),
-		})
-	}
-	return out
-}
-
 func Validate(source string) ValidationResult {
 	cfg, topo, scenarios, err := load(source)
 	if err != nil {
@@ -595,9 +527,10 @@ const maxGeneratedTraces = maxTraces
 // it is the browser analogue of synth.SampleTraces, made visual. Only trace
 // signals are produced; metrics and logs stay on the duration-based Run path.
 //
-// synth.GenerateTraces emits solely through a TracerProvider — it takes no motel
-// SpanObserver — so, unlike Run and ImportReplay, the generate path captures
-// spans with an SDK exporter (spanCapture) and resolves parent links afterwards.
+// synth.GenerateTraces forwards a SpanObserver hook, so generation reuses the
+// same captureObserver as Run and ImportReplay and reports authoritative span
+// metadata. The TracerProvider still supplies span/trace IDs but needs no
+// exporter, since spans are collected through the observer rather than the SDK.
 func Generate(source string, traces int, seed uint64) RunResult {
 	if traces <= 0 {
 		traces = 1
@@ -611,8 +544,8 @@ func Generate(source string, traces int, seed uint64) RunResult {
 		return generateError(err)
 	}
 
-	capture := &spanCapture{}
-	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(capture))
+	observer := &captureObserver{}
+	tracerProvider := sdktrace.NewTracerProvider()
 	defer func() { _ = tracerProvider.Shutdown(context.Background()) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), maxDuration+2*time.Second)
@@ -622,12 +555,13 @@ func Generate(source string, traces int, seed uint64) RunResult {
 		Traces:           traces,
 		Seed:             seed,
 		MaxSpansPerTrace: maxSpansPerTrace,
+		Observers:        []synth.SpanObserver{observer},
 	})
 	if err != nil {
 		return generateError(err)
 	}
 
-	spans := capture.records()
+	spans := observer.Records()
 	return RunResult{
 		OK:       true,
 		Stats:    stats,
