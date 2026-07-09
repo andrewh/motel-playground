@@ -72,6 +72,13 @@ URL itself, so treat the link as equivalent to sharing the YAML. Very large
 topologies may exceed practical browser or chat URL limits; use **Save** to
 share the YAML file instead.
 
+## Native macOS app (experimental)
+
+`native/macos/` holds a proof-of-concept SwiftUI desktop shell that links
+the playground engine directly as a Go C archive — no web view. Build it
+with `make native-macos` and see `native/macos/README.md` for scope and
+details.
+
 ## Development
 
 Build the WASM artifact:

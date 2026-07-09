@@ -1,4 +1,4 @@
-.PHONY: build wasm serve test lint clean
+.PHONY: build wasm serve test lint clean native-macos native-macos-test
 
 GOROOT := $(shell go env GOROOT)
 
@@ -38,5 +38,17 @@ lint:
 	node --check web/telemetry.mjs
 	node --check web/topology-generator.mjs
 
+native-macos:
+	mkdir -p native/macos/gen
+	go build -buildmode=c-archive -o native/macos/gen/motelbridge.a ./cmd/motel-bridge
+	swiftc -O -o native/macos/gen/MotelPlayground \
+		native/macos/Sources/*.swift \
+		-import-objc-header native/macos/gen/motelbridge.h \
+		native/macos/gen/motelbridge.a
+
+native-macos-test: native-macos
+	native/macos/gen/MotelPlayground --selftest
+
 clean:
 	rm -f web/motel.wasm web/wasm_exec.js
+	rm -f native/macos/gen/motelbridge.a native/macos/gen/motelbridge.h native/macos/gen/MotelPlayground
