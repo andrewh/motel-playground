@@ -35,6 +35,13 @@ func runSelfTest() -> Int32 {
     check("run ok", run?.ok == true)
     check("run produced traces", (run?.stats?.traces ?? 0) > 0)
     check("run produced spans", (run?.stats?.spans ?? 0) > 0)
+    check("run captured span records", !(run?.spans ?? []).isEmpty)
+    check("run captured metric records", !(run?.metrics ?? []).isEmpty)
+    check("run captured log records", !(run?.logs ?? []).isEmpty)
+    check("run topology has graph nodes", !(run?.topology?.graph.nodes ?? []).isEmpty)
+    check("run topology has graph edges", !(run?.topology?.graph.edges ?? []).isEmpty)
+    let spanTraceIDs = Set((run?.spans ?? []).map(\.traceID))
+    check("span records group into traces", spanTraceIDs.count == (run?.stats?.traces ?? 0))
 
     if let stats = run?.stats {
         print("stats: \(stats.traces) traces, \(stats.spans) spans, \(stats.errors) errors in \(stats.elapsedMs)ms")

@@ -15,12 +15,23 @@ engine is called through three exported C functions.
   `MotelValidate`, `MotelRun`, and `MotelFree`. Results cross the FFI
   boundary as JSON strings, the same contract the WASM bridge uses.
 - `Sources/Engine.swift` — Swift wrapper handling C string ownership and
-  JSON decoding.
-- `Sources/ContentView.swift` — topology YAML editor, run controls
-  (duration, seed, signal toggles), summary statistics, diagnostics, and
-  raw JSON output.
+  JSON decoding into the record types the views consume.
+- `Sources/ContentView.swift` — window layout: topology YAML editor,
+  toolbar (open, save, sample, validate, run), run controls (duration,
+  seed, slow-span threshold, signal toggles), result tabs, status bar.
+- Result views, one per tab, mirroring the web playground: `SummaryView`
+  (run statistics, topology facts, diagnostics), `WaterfallView` (trace
+  picker plus span waterfall), `MetricsView` (Swift Charts time series and
+  bar charts with the web's series-capping rule), `LogsView` (table),
+  `ServiceMapView` (node-link diagram drawn from the engine's grid
+  placement), and the raw JSON view.
 - `Sources/SelfTest.swift` — headless `--selftest` mode used by
   `make native-macos-test`.
+- `Sources/Snapshot.swift` — `--snapshot <dir>` runs the sample topology
+  and writes one PNG per result tab from the app's own view tree, so it
+  needs no screen-recording permission. Caveat: the capture path misses
+  SwiftUI-drawn chrome (pane headers, toggles, the tab picker); the six
+  result views capture fully. Check chrome by launching the app.
 
 ## Build and run
 
@@ -40,16 +51,18 @@ make native-macos-test
 
 ## Proof-of-concept scope
 
-Covered: validate, bounded runs with duration/seed/signal controls, native
-summary statistics and diagnostics, raw JSON output, and a headless self
-test. Verified on macOS 26 (arm64) with Go 1.25 and Swift 6.3; the
-self-contained binary is about 7 MB.
+Covered: validate, bounded runs with duration/seed/slow-threshold/signal
+controls, topology YAML open/save and sample reset, and native result
+views for summary, span waterfall, metric charts, logs, service map, and
+raw JSON. Verified on macOS 26 (arm64) with Go 1.25 and Swift 6.3; the
+self-contained binary is about 8 MB.
 
-Not covered yet, relative to the web playground: traffic preview, span
-waterfall, service map, trace import/replay, sessions, and sharing links.
-Those would be native views over the same JSON payloads the web frontend
-already consumes. The binary is unsigned and not bundled as a `.app`;
-distribution would need bundling, code signing, and notarisation.
+Not covered yet, relative to the web playground: traffic preview, random
+topology generation, trace import/replay, sessions/history, result
+filtering, and sharing links. Those would be native views over the same
+JSON payloads the web frontend already consumes. The binary is unsigned
+and not bundled as a `.app`; distribution would need bundling, code
+signing, and notarisation.
 
 One engine detail to note: `-buildmode=c-archive` starts the Go runtime
 inside the host process, so the binary carries the engine and both
