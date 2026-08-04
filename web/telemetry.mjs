@@ -300,7 +300,7 @@ function initGoogleAnalytics() {
   if (!win) return;
   win.dataLayer = win.dataLayer || [];
   const existingGtag = typeof win.gtag === "function" ? win.gtag.bind(win) : null;
-  telemetryState.gtag = existingGtag || ((...args) => win.dataLayer.push(args));
+  telemetryState.gtag = existingGtag || makeGtagQueue(win);
   win.gtag = telemetryState.gtag;
   if (telemetryState.config.loadGoogleAnalyticsScript) {
     appendAnalyticsScript(telemetryState.config.measurementID);
@@ -310,6 +310,15 @@ function initGoogleAnalytics() {
     send_page_view: false,
   });
   telemetryState.gaEnabled = true;
+}
+
+function makeGtagQueue(win) {
+  // gtag.js only replays queued commands pushed as the `arguments` object;
+  // entries pushed as plain arrays are ignored, so the tag loads without ever
+  // sending a hit.
+  return function gtag() {
+    win.dataLayer.push(arguments);
+  };
 }
 
 function appendAnalyticsScript(measurementID) {
