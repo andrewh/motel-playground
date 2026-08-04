@@ -36,6 +36,8 @@ convention and provides guidance for AI coding agents working in this repository
 - `make lint` runs Go formatting checks, `go vet`, and JavaScript syntax
   checks.
 - Set `CHROME_BIN` when the browser smoke test cannot find Chrome.
+- `.github/workflows/ci.yml` runs `make lint` and `make test` on every pull
+  request and on pushes to `main`; `.github/workflows/pages.yml` deploys.
 
 ## Frontend Direction
 
