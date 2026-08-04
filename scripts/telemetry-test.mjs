@@ -15,6 +15,7 @@ const byteBucketSmallLimit = 10 * 1024;
 const byteBucketMediumLimit = 100 * 1024;
 const byteBucketLargeLimit = 1024 * 1024;
 const longParamValue = "x".repeat(120);
+const argumentsTag = "[object Arguments]";
 
 const local = makeTelemetryEnvironment("http://127.0.0.1:8080/#state=secret");
 initTelemetry({ measurementID: "G-LOCAL" }, local.environment);
@@ -29,8 +30,14 @@ assert.equal(telemetrySnapshot().gaEnabled, true);
 assert.equal(hosted.document.scripts.length, 1);
 assert.ok(hosted.document.scripts[0].src.includes("id=G-B2GVLBQD3G"));
 
+// gtag.js drops dataLayer entries that are not the `arguments` object, so the
+// queue shape is part of the contract, not an implementation detail.
+for (const command of hosted.window.dataLayer) {
+  assert.equal(Object.prototype.toString.call(command), argumentsTag);
+}
+
 const configCommand = hosted.window.dataLayer.find((command) => command[0] === "config");
-assert.deepEqual(configCommand, ["config", "G-B2GVLBQD3G", { send_page_view: false }]);
+assert.deepEqual([...configCommand], ["config", "G-B2GVLBQD3G", { send_page_view: false }]);
 
 const pageView = hosted.window.dataLayer.find((command) => command[0] === "event" && command[1] === "page_view");
 assert.equal(pageView[2].page_location, "https://andrewh.github.io/motel-playground/");

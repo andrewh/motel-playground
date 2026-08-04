@@ -27,6 +27,11 @@ Optional fields:
 
 ## Events
 
+Commands reach Google Analytics through the standard `gtag` queue: each call
+pushes its `arguments` object onto `window.dataLayer`. `gtag.js` ignores queued
+entries that are plain arrays, so the tag would load and report as detected
+while never sending a hit.
+
 Google Analytics uses manual page views with sanitized URLs. `page_location`
 and `page_path` include only origin and pathname, never `location.hash`.
 
