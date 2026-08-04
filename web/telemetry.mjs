@@ -300,7 +300,7 @@ function initGoogleAnalytics() {
   if (!win) return;
   win.dataLayer = win.dataLayer || [];
   const existingGtag = typeof win.gtag === "function" ? win.gtag.bind(win) : null;
-  telemetryState.gtag = existingGtag || ((...args) => win.dataLayer.push(args));
+  telemetryState.gtag = existingGtag || createGtagQueueShim(win);
   win.gtag = telemetryState.gtag;
   if (telemetryState.config.loadGoogleAnalyticsScript) {
     appendAnalyticsScript(telemetryState.config.measurementID);
@@ -310,6 +310,15 @@ function initGoogleAnalytics() {
     send_page_view: false,
   });
   telemetryState.gaEnabled = true;
+}
+
+// gtag.js replays only the `dataLayer` entries whose class is `[object
+// Arguments]`; a rest array is merged into the data model instead of being
+// executed, so every `js`, `config`, and `event` command is silently dropped.
+function createGtagQueueShim(win) {
+  return function gtag() {
+    win.dataLayer.push(arguments);
+  };
 }
 
 function appendAnalyticsScript(measurementID) {

@@ -15,6 +15,7 @@ const byteBucketSmallLimit = 10 * 1024;
 const byteBucketMediumLimit = 100 * 1024;
 const byteBucketLargeLimit = 1024 * 1024;
 const longParamValue = "x".repeat(120);
+const argumentsClassName = "[object Arguments]";
 
 const local = makeTelemetryEnvironment("http://127.0.0.1:8080/#state=secret");
 initTelemetry({ measurementID: "G-LOCAL" }, local.environment);
@@ -29,10 +30,15 @@ assert.equal(telemetrySnapshot().gaEnabled, true);
 assert.equal(hosted.document.scripts.length, 1);
 assert.ok(hosted.document.scripts[0].src.includes("id=G-B2GVLBQD3G"));
 
-const configCommand = hosted.window.dataLayer.find((command) => command[0] === "config");
+const hostedCommands = hosted.window.dataLayer.map((command) => {
+  assert.equal(Object.prototype.toString.call(command), argumentsClassName);
+  return Array.from(command);
+});
+
+const configCommand = hostedCommands.find((command) => command[0] === "config");
 assert.deepEqual(configCommand, ["config", "G-B2GVLBQD3G", { send_page_view: false }]);
 
-const pageView = hosted.window.dataLayer.find((command) => command[0] === "event" && command[1] === "page_view");
+const pageView = hostedCommands.find((command) => command[0] === "event" && command[1] === "page_view");
 assert.equal(pageView[2].page_location, "https://andrewh.github.io/motel-playground/");
 assert.equal(pageView[2].page_path, "/motel-playground/");
 assert.equal(pageView[2].page_location.includes("#"), false);
