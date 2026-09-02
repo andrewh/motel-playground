@@ -149,6 +149,84 @@ try {
   ) {
     throw new Error(`static-rate preview did not expose forecast details: ${JSON.stringify(runtimeState)}`);
   }
+  const firstTour = await waitFor(async () => {
+    const state = await evaluate(client, `(${tourState})()`);
+    return state.open && state.focusedTooltip ? state : false;
+  }, "tour opened on first load");
+  if (
+    firstTour.step !== "editor"
+    || firstTour.title !== "Topology YAML"
+    || !firstTour.progress.startsWith("1 of ")
+    || !firstTour.targetClass.includes("pane-head")
+    || !firstTour.backDisabled
+    || firstTour.nextText !== "Next"
+    || !firstTour.seen
+    || !firstTour.tooltipVisible
+  ) {
+    throw new Error(`first-load tour did not open on the editor step: ${JSON.stringify(firstTour)}`);
+  }
+  await evaluate(client, `document.querySelector("#tour-next").click()`);
+  const secondTourStep = await waitFor(async () => {
+    const state = await evaluate(client, `(${tourState})()`);
+    return state.step === "settings" && state.focusedTooltip ? state : false;
+  }, "tour advanced to run settings");
+  if (
+    secondTourStep.backDisabled
+    || !secondTourStep.progress.startsWith("2 of ")
+    || !secondTourStep.targetClass.includes("control-row-primary")
+    || !secondTourStep.anchored
+  ) {
+    throw new Error(`tour step two did not anchor to the run settings: ${JSON.stringify(secondTourStep)}`);
+  }
+  await dispatchShortcut(client, { key: "ArrowLeft", selector: "#tour-tooltip" });
+  await waitFor(async () => {
+    const state = await evaluate(client, `(${tourState})()`);
+    return state.step === "editor" ? state : false;
+  }, "tour stepped back with the arrow key");
+  await dispatchShortcut(client, { key: "ArrowRight", selector: "#tour-tooltip" });
+  await waitFor(async () => {
+    const state = await evaluate(client, `(${tourState})()`);
+    return state.step === "settings" ? state : false;
+  }, "tour stepped forward with the arrow key");
+  await dispatchShortcut(client, { key: "Escape" });
+  const dismissedTour = await waitFor(async () => {
+    const state = await evaluate(client, `(${tourState})()`);
+    return !state.open ? state : false;
+  }, "tour dismissed with Escape");
+  if (dismissedTour.targetClass || dismissedTour.step || !dismissedTour.seen || !dismissedTour.focusedHelpButton) {
+    throw new Error(`dismissed tour left state behind: ${JSON.stringify(dismissedTour)}`);
+  }
+
+  await evaluate(client, `document.querySelector("#shortcut-help-button").click()`);
+  await waitFor(async () => {
+    const state = await evaluate(client, `(${shortcutHelpState})()`);
+    return state.open && state.text.includes("Start tour") ? state : false;
+  }, "shortcut help offers the tour");
+  await evaluate(client, `document.querySelector("#tour-start").click()`);
+  const restartedTour = await waitFor(async () => {
+    const state = await evaluate(client, `(${tourState})()`);
+    return state.open && state.focusedTooltip && !state.helpOpen ? state : false;
+  }, "tour restarted from shortcut help");
+  if (restartedTour.step !== "editor") {
+    throw new Error(`restarted tour did not begin at the first step: ${JSON.stringify(restartedTour)}`);
+  }
+  let completedTour = restartedTour;
+  for (let guard = 0; guard < 20 && completedTour.open; guard += 1) {
+    const previousStep = completedTour.step;
+    const expectDone = completedTour.nextText === "Done";
+    await evaluate(client, `document.querySelector("#tour-next").click()`);
+    completedTour = await waitFor(async () => {
+      const state = await evaluate(client, `(${tourState})()`);
+      return expectDone ? (!state.open ? state : false) : (state.step !== previousStep && state.open ? state : false);
+    }, `tour advanced past ${previousStep}`);
+    if (completedTour.open && !completedTour.tooltipVisible) {
+      throw new Error(`tour tooltip left the viewport on step ${completedTour.step}: ${JSON.stringify(completedTour)}`);
+    }
+  }
+  if (completedTour.open || !completedTour.focusedHelpButton) {
+    throw new Error(`tour did not finish from the last step: ${JSON.stringify(completedTour)}`);
+  }
+
   const sampleTopology = await evaluate(client, `window.motelPlayground.getTopology()`);
   const initialTabState = await evaluate(client, `(${resultTabA11yState})()`);
   if (!initialTabState.ok) {
@@ -537,6 +615,11 @@ try {
   }
 
   await client.send("Page.navigate", { url: `${pagesAppURL}${shareHash}` });
+  await waitFor(async () => evaluate(client, `document.querySelector("#runtime-status")?.textContent === "Runtime ready"`), "runtime ready after pages navigation");
+  const returningTour = await evaluate(client, `(${tourState})()`);
+  if (returningTour.open || !returningTour.seen) {
+    throw new Error(`tour reopened for a returning visitor: ${JSON.stringify(returningTour)}`);
+  }
   const restoredShare = await waitFor(async () => {
     const state = await evaluate(client, `(${shareRestoreState})()`);
     return state.ready
@@ -1193,6 +1276,45 @@ function shortcutHelpState() {
     focusedDialog: document.activeElement === document.querySelector("#shortcut-help .shortcut-modal"),
     focusedHelpButton: document.activeElement === document.querySelector("#shortcut-help-button"),
     text: help.textContent,
+  };
+}
+
+function tourState() {
+  const tour = document.querySelector("#tour");
+  const tooltip = document.querySelector("#tour-tooltip");
+  const target = document.querySelector(".tour-target");
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const targetRect = target?.getBoundingClientRect();
+  const tooltipVisible = !tour.hidden
+    && tooltipRect.width > 0
+    && tooltipRect.left >= 0
+    && tooltipRect.top >= 0
+    && tooltipRect.right <= window.innerWidth
+    && tooltipRect.bottom <= window.innerHeight;
+  let seen = null;
+  try {
+    seen = window.localStorage.getItem("motel-playground-tour-v1") === "seen";
+  } catch {
+    seen = null;
+  }
+  return {
+    open: !tour.hidden,
+    step: tour.dataset.step ?? "",
+    title: document.querySelector("#tour-title").textContent,
+    progress: document.querySelector("#tour-progress").textContent,
+    nextText: document.querySelector("#tour-next").textContent,
+    backDisabled: document.querySelector("#tour-back").disabled,
+    targetClass: target ? String(target.className) : "",
+    tooltipVisible,
+    placement: tooltip.dataset.placement ?? "",
+    anchored: Boolean(targetRect) && (
+      (tooltip.dataset.placement === "bottom" && tooltipRect.top >= targetRect.bottom)
+      || (tooltip.dataset.placement === "top" && tooltipRect.bottom <= targetRect.top)
+    ),
+    focusedTooltip: document.activeElement === tooltip,
+    focusedHelpButton: document.activeElement === document.querySelector("#shortcut-help-button"),
+    helpOpen: !document.querySelector("#shortcut-help").hidden,
+    seen,
   };
 }
 

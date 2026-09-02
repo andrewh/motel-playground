@@ -402,8 +402,103 @@ h2 {
   font-weight: 560;
 }
 
+.shortcut-modal-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--space-2);
+  align-items: center;
+}
+
 .privacy-modal {
   width: min(680px, 100%);
+}
+
+.tour[hidden] {
+  display: none;
+}
+
+.tour-target {
+  outline: 2px solid var(--focus);
+  outline-offset: 5px;
+  border-radius: var(--radius-sm);
+}
+
+.tour-tooltip {
+  position: fixed;
+  z-index: 15;
+  width: min(340px, calc(100vw - 24px));
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  animation: reveal 180ms var(--ease-out);
+}
+
+.tour-tooltip:focus {
+  outline: none;
+}
+
+.tour-tooltip:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 4px;
+}
+
+.tour-tooltip::before {
+  content: "";
+  position: absolute;
+  left: var(--space-5);
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--line-strong);
+  border-right: 0;
+  border-bottom: 0;
+  background: var(--surface);
+  transform: rotate(45deg);
+}
+
+.tour-tooltip[data-placement="bottom"]::before {
+  top: -6px;
+}
+
+.tour-tooltip[data-placement="top"]::before {
+  bottom: -6px;
+  transform: rotate(225deg);
+}
+
+.tour-tooltip[data-placement="none"]::before {
+  display: none;
+}
+
+.tour-progress {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 620;
+  text-transform: uppercase;
+}
+
+.tour-tooltip h2 {
+  font-size: 1rem;
+}
+
+.tour-tooltip p:not(.tour-progress) {
+  color: var(--ink);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.tour-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.tour-nav {
+  display: flex;
+  gap: var(--space-2);
 }
 
 .privacy-copy {
@@ -2182,7 +2277,8 @@ pre {
   }
 
   .shell,
-  .modal-backdrop {
+  .modal-backdrop,
+  .tour {
     display: none !important;
   }
 

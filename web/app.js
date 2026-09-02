@@ -23,6 +23,7 @@ import {
   sessionMimeType,
   sessionStorageKey,
 } from "./session-history.mjs";
+import { createTour, placeTooltip } from "./tour.mjs";
 import {
   bucketBytes,
   categorizeError,
@@ -187,6 +188,15 @@ const els = {
   shortcutHelpPanel: document.querySelector("#shortcut-help .shortcut-modal"),
   shortcutHelpButton: document.querySelector("#shortcut-help-button"),
   shortcutHelpClose: document.querySelector("#shortcut-help-close"),
+  tour: document.querySelector("#tour"),
+  tourTooltip: document.querySelector("#tour-tooltip"),
+  tourStart: document.querySelector("#tour-start"),
+  tourProgress: document.querySelector("#tour-progress"),
+  tourTitle: document.querySelector("#tour-title"),
+  tourBody: document.querySelector("#tour-body"),
+  tourSkip: document.querySelector("#tour-skip"),
+  tourBack: document.querySelector("#tour-back"),
+  tourNext: document.querySelector("#tour-next"),
   file: document.querySelector("#topology-file"),
   traceDropZone: document.querySelector(".trace-import-panel"),
   traceFile: document.querySelector("#trace-file"),
@@ -277,8 +287,12 @@ const editors = {
 };
 let lastShortcutFocus = null;
 let lastPrivacyFocus = null;
+let lastTourFocus = null;
 const sessionPersistence = sessionStorageAdapter();
 const sessionStore = createSessionStore({ storage: sessionPersistence.storage });
+const tour = createTour({ storage: sessionPersistence.storage });
+const tourTargetClass = "tour-target";
+const tourNoPlacement = "none";
 
 els.editor.value = sampleTopology;
 clearMap(emptyCopy.map);
@@ -324,6 +338,14 @@ els.shortcutHelp.addEventListener("click", (event) => {
 els.shortcutHelpPanel.addEventListener("keydown", (event) => {
   if (event.key === "Tab") trapModalFocus(event, els.shortcutHelpPanel);
 });
+els.tourStart.addEventListener("click", () => {
+  closeShortcutHelp();
+  startTour();
+});
+els.tourNext.addEventListener("click", () => advanceTour());
+els.tourBack.addEventListener("click", () => stepTourBack());
+els.tourSkip.addEventListener("click", () => endTour());
+els.tourTooltip.addEventListener("keydown", handleTourKeydown);
 document.addEventListener("keydown", handleGlobalShortcut);
 document.addEventListener("dragover", handleDocumentFileDragOver);
 document.addEventListener("drop", handleDocumentFileDrop);
@@ -406,6 +428,7 @@ window.addEventListener("beforeprint", () => {
 
 void restoreShareStateFromURL();
 syncControls();
+if (tour.shouldAutoStart()) startTour();
 void traceAsync(telemetrySpanNames.appStartup, () => loadWasm());
 
 function activateTab(tab) {
@@ -469,6 +492,11 @@ function handleGlobalShortcut(event) {
       event.preventDefault();
       closeShortcutHelp();
     }
+    return;
+  }
+  if (isTourOpen() && event.key === "Escape") {
+    event.preventDefault();
+    endTour();
     return;
   }
 
@@ -712,6 +740,7 @@ function initEditors() {
     createResultSnapshot: () => makeCurrentResultSnapshot(),
     importResultSnapshot: (snapshot) => applyResultSnapshot(normalizeResultSnapshot(snapshot)),
     importTraces: (source, format = "auto") => window.motelImportTraces(source, format),
+    startTour: () => startTour(),
   };
 }
 
@@ -928,6 +957,109 @@ function closeShortcutHelp() {
 
 function isShortcutHelpOpen() {
   return !els.shortcutHelp.hidden;
+}
+
+function startTour(at = 0) {
+  if (!isTourOpen()) {
+    lastTourFocus = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : els.shortcutHelpButton;
+    window.addEventListener("resize", positionTour);
+    window.addEventListener("scroll", positionTour, true);
+    els.tour.hidden = false;
+  }
+  tour.start(at);
+  renderTourStep();
+  requestAnimationFrame(() => els.tourTooltip.focus({ preventScroll: true }));
+}
+
+function advanceTour() {
+  if (!tour.active) return;
+  if (!tour.next()) {
+    endTour();
+    return;
+  }
+  renderTourStep();
+  els.tourTooltip.focus({ preventScroll: true });
+}
+
+function stepTourBack() {
+  if (!tour.active || tour.isFirst) return;
+  tour.back();
+  renderTourStep();
+  els.tourTooltip.focus({ preventScroll: true });
+}
+
+function endTour() {
+  if (!isTourOpen()) return;
+  tour.finish();
+  clearTourTarget();
+  els.tour.hidden = true;
+  delete els.tour.dataset.step;
+  window.removeEventListener("resize", positionTour);
+  window.removeEventListener("scroll", positionTour, true);
+  const target = lastTourFocus?.isConnected ? lastTourFocus : els.shortcutHelpButton;
+  lastTourFocus = null;
+  target.focus({ preventScroll: true });
+}
+
+function isTourOpen() {
+  return !els.tour.hidden;
+}
+
+function handleTourKeydown(event) {
+  if (event.defaultPrevented || isTextEntryTarget(event.target)) return;
+  if (event.key === "ArrowRight") {
+    event.preventDefault();
+    advanceTour();
+  } else if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    stepTourBack();
+  }
+}
+
+function renderTourStep() {
+  const step = tour.step;
+  if (!step) return;
+  clearTourTarget();
+  const target = document.querySelector(step.target);
+  if (target) {
+    target.classList.add(tourTargetClass);
+    target.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+  els.tour.dataset.step = step.id;
+  els.tourProgress.textContent = tour.progress;
+  els.tourTitle.textContent = step.title;
+  els.tourBody.textContent = step.body;
+  els.tourBack.disabled = tour.isFirst;
+  els.tourNext.textContent = tour.isLast ? "Done" : "Next";
+  positionTour();
+}
+
+function clearTourTarget() {
+  for (const element of document.querySelectorAll(`.${tourTargetClass}`)) {
+    element.classList.remove(tourTargetClass);
+  }
+}
+
+function positionTour() {
+  const step = tour.step;
+  if (!isTourOpen() || !step) return;
+  const tooltip = els.tourTooltip;
+  const size = { width: tooltip.offsetWidth, height: tooltip.offsetHeight };
+  const viewport = { width: window.innerWidth, height: window.innerHeight };
+  const target = document.querySelector(step.target);
+  const rect = target?.getBoundingClientRect();
+  if (!rect || (rect.width === 0 && rect.height === 0)) {
+    tooltip.style.left = `${Math.max(0, Math.round((viewport.width - size.width) / 2))}px`;
+    tooltip.style.top = `${Math.max(0, Math.round((viewport.height - size.height) / 2))}px`;
+    tooltip.dataset.placement = tourNoPlacement;
+    return;
+  }
+  const placed = placeTooltip({ target: rect, tooltip: size, viewport, placement: step.placement });
+  tooltip.style.left = `${placed.left}px`;
+  tooltip.style.top = `${placed.top}px`;
+  tooltip.dataset.placement = placed.placement;
 }
 
 function trapModalFocus(event, panel) {
