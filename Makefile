@@ -17,6 +17,7 @@ test: wasm
 	node scripts/result-snapshot-test.mjs
 	node scripts/session-history-test.mjs
 	node scripts/telemetry-test.mjs
+	node scripts/tour-test.mjs
 	node scripts/smoke-wasm.mjs
 	node scripts/smoke-browser.mjs
 
@@ -28,6 +29,7 @@ lint:
 	node --check scripts/session-history-test.mjs
 	node --check scripts/share-state-test.mjs
 	node --check scripts/telemetry-test.mjs
+	node --check scripts/tour-test.mjs
 	node --check scripts/smoke-wasm.mjs
 	node --check web/app.js
 	node --check web/graph.js
@@ -37,6 +39,7 @@ lint:
 	node --check web/share-state.mjs
 	node --check web/telemetry.mjs
 	node --check web/topology-generator.mjs
+	node --check web/tour.mjs
 
 clean:
 	rm -f web/motel.wasm web/wasm_exec.js

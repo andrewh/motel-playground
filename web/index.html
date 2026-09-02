@@ -271,13 +271,16 @@
             <h2 id="shortcut-help-title">Keyboard Shortcuts</h2>
             <p id="shortcut-help-summary">Global shortcuts pause while focus is in the editor or a form field. Press Esc to leave that field.</p>
           </div>
-          <button id="shortcut-help-close" class="icon-button" type="button" aria-label="Close keyboard shortcuts">
-            <span aria-hidden="true">x</span>
-          </button>
+          <div class="shortcut-modal-actions">
+            <button id="tour-start" type="button">Start tour</button>
+            <button id="shortcut-help-close" class="icon-button" type="button" aria-label="Close keyboard shortcuts">
+              <span aria-hidden="true">x</span>
+            </button>
+          </div>
         </header>
         <dl class="shortcut-list">
           <div><dt><kbd>?</kbd></dt><dd>Open this shortcut list</dd></div>
-          <div><dt><kbd>Esc</kbd></dt><dd>Close help or clear the output filter</dd></div>
+          <div><dt><kbd>Esc</kbd></dt><dd>Close help, end the tour, or clear the output filter</dd></div>
           <div><dt><kbd>Cmd/Ctrl</kbd><kbd>Enter</kbd></dt><dd>Run topology</dd></div>
           <div><dt><kbd>Cmd/Ctrl</kbd><kbd>Shift</kbd><kbd>Enter</kbd></dt><dd>Validate topology</dd></div>
           <div><dt><kbd>Cmd/Ctrl</kbd><kbd>S</kbd></dt><dd>Save topology YAML</dd></div>
@@ -285,6 +288,28 @@
           <div><dt><kbd>Cmd/Ctrl</kbd><kbd>K</kbd><span>or</span><kbd>/</kbd></dt><dd>Focus output filter</dd></div>
           <div><dt><kbd>1</kbd><span>to</span><kbd>7</kbd></dt><dd>Switch result tabs</dd></div>
         </dl>
+      </section>
+    </div>
+
+    <div id="tour" class="tour" hidden>
+      <section
+        id="tour-tooltip"
+        class="tour-tooltip"
+        role="dialog"
+        aria-labelledby="tour-title"
+        aria-describedby="tour-body"
+        tabindex="-1"
+      >
+        <p id="tour-progress" class="tour-progress"></p>
+        <h2 id="tour-title"></h2>
+        <p id="tour-body"></p>
+        <div class="tour-actions">
+          <button id="tour-skip" type="button">Skip</button>
+          <div class="tour-nav">
+            <button id="tour-back" type="button">Back</button>
+            <button id="tour-next" type="button" class="primary">Next</button>
+          </div>
+        </div>
       </section>
     </div>
 
